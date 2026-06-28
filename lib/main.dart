@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:ocean/features/auth/login_mobile.dart';
 
 void main() {
   runApp(const VoidOceanApp());
@@ -15,7 +16,7 @@ class VoidOceanApp extends StatelessWidget {
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF030712), // Màu đen đại dương sâu thẳm
       ),
-      home: const OceanHomeScreen(),
+      home: const LoginMobileScreen(),
     );
   }
 }
@@ -68,7 +69,7 @@ class _OceanHomeScreenState extends State<OceanHomeScreen> with SingleTickerProv
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('Your secret has vanished into the deep ocean...'),
-          backgroundColor: const Color(0xFF1E3A8A).withOpacity(0.9),
+          backgroundColor: const Color(0xFF1E3A8A).withValues(alpha: 0.9),
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
@@ -259,12 +260,12 @@ class _OceanHomeScreenState extends State<OceanHomeScreen> with SingleTickerProv
                           margin: const EdgeInsets.symmetric(vertical: 12),
                           decoration: BoxDecoration(
                             // Hiệu ứng lọ thủy tinh pha lê (Glow glassmorphism)
-                            color: const Color(0xFF0F172A).withOpacity(0.4),
+                            color: const Color(0xFF0F172A).withValues(alpha: 0.4),
                             borderRadius: BorderRadius.circular(24),
-                            border: Border.all(color: const Color(0xFF38BDF8).withOpacity(0.15), width: 1.2),
+                            border: Border.all(color: const Color(0xFF38BDF8).withValues(alpha: 0.15), width: 1.2),
                             boxShadow: [
                               BoxShadow(
-                                color: const Color(0xFF0EA5E9).withOpacity(0.03),
+                                color: const Color(0xFF0EA5E9).withValues(alpha: 0.03),
                                 blurRadius: 15,
                                 spreadRadius: 1,
                               )
@@ -310,7 +311,7 @@ class _OceanHomeScreenState extends State<OceanHomeScreen> with SingleTickerProv
                                       child: Container(
                                         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                                         decoration: BoxDecoration(
-                                          color: bottle['isLiked'] ? const Color(0xFF0EA5E9).withOpacity(0.15) : Colors.transparent,
+                                          color: bottle['isLiked'] ? const Color(0xFF0EA5E9).withValues(alpha: 0.15) : Colors.transparent,
                                           borderRadius: BorderRadius.circular(16),
                                         ),
                                         child: Row(
@@ -353,7 +354,7 @@ class _OceanHomeScreenState extends State<OceanHomeScreen> with SingleTickerProv
                 child: Container(
                   height: 56,
                   decoration: BoxDecoration(
-                    color: const Color(0xFF0EA5E9).withOpacity(0.8),
+                    color: const Color(0xFF0EA5E9).withValues(alpha: 0.8),
                   ),
                   child: Material(
                     color: Colors.transparent,
