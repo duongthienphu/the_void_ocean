@@ -1,27 +1,24 @@
 import 'package:flutter/material.dart';
 
-class LoginMobileScreen extends StatefulWidget {
-  const LoginMobileScreen({required this.onAuthenticated, super.key});
+class LoginWebSmallScreen extends StatefulWidget {
+  const LoginWebSmallScreen({required this.onAuthenticated, super.key});
 
   final VoidCallback onAuthenticated;
 
   @override
-  State<LoginMobileScreen> createState() => _LoginMobileScreenState();
+  State<LoginWebSmallScreen> createState() => _LoginWebSmallScreenState();
 }
 
-class _LoginMobileScreenState extends State<LoginMobileScreen> {
+class _LoginWebSmallScreenState extends State<LoginWebSmallScreen> {
+  // 1. ĐÃ XÓA _confirmPasswordController và biến _isRegister
   final _nameController = TextEditingController();
   final _passwordController = TextEditingController();
-  final _confirmPasswordController = TextEditingController();
-
-  bool _isRegister = false;
   bool _hidePassword = true;
 
   @override
   void dispose() {
     _nameController.dispose();
     _passwordController.dispose();
-    _confirmPasswordController.dispose();
     super.dispose();
   }
 
@@ -65,7 +62,7 @@ class _LoginMobileScreenState extends State<LoginMobileScreen> {
                             ),
                             const SizedBox(height: 14),
                             Text(
-                              'Vớt một tâm sự ngẫu nhiên, gieo một nỗi niềm khói nói. Rồi những cơn sóng sẽ cuốn chúng đi, đến bất cứ đâu, bất cứ ai.',
+                              'Vớt một tâm sự ngẫu nhiên, gieo một nỗi niềm khó nói. Rồi những cơn sóng sẽ cuốn chúng đi, đến bất cứ đâu, bất cứ ai.',
                               style: Theme.of(context).textTheme.bodyMedium
                                   ?.copyWith(
                                     color: Colors.white.withValues(alpha: 0.72),
@@ -74,15 +71,12 @@ class _LoginMobileScreenState extends State<LoginMobileScreen> {
                             ),
                           ],
                         ),
-                        const SizedBox(height: 14),
+                        const SizedBox(height: 24),
+                        // 2. CẬP NHẬT TRUYỀN THAM SỐ GỌN NHẸ CHO _AuthPanel
                         _AuthPanel(
-                          isRegister: _isRegister,
                           hidePassword: _hidePassword,
                           nameController: _nameController,
                           passwordController: _passwordController,
-                          confirmPasswordController: _confirmPasswordController,
-                          onToggleMode: () =>
-                              setState(() => _isRegister = !_isRegister),
                           onTogglePassword: () =>
                               setState(() => _hidePassword = !_hidePassword),
                           onSubmit: widget.onAuthenticated,
@@ -102,22 +96,16 @@ class _LoginMobileScreenState extends State<LoginMobileScreen> {
 
 class _AuthPanel extends StatelessWidget {
   const _AuthPanel({
-    required this.isRegister,
     required this.hidePassword,
     required this.nameController,
     required this.passwordController,
-    required this.confirmPasswordController,
-    required this.onToggleMode,
     required this.onTogglePassword,
     required this.onSubmit,
-  });
+  }); // <-- Đã xóa các tham số Đăng ký ở đây
 
-  final bool isRegister;
   final bool hidePassword;
   final TextEditingController nameController;
   final TextEditingController passwordController;
-  final TextEditingController confirmPasswordController;
-  final VoidCallback onToggleMode;
   final VoidCallback onTogglePassword;
   final VoidCallback onSubmit;
 
@@ -141,8 +129,8 @@ class _AuthPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _ModeSwitch(isRegister: isRegister, onToggleMode: onToggleMode),
-          const SizedBox(height: 18),
+          // 3. ĐÃ XÓA TOÀN BỘ THANH CHUYỂN CHẾ ĐỘ _ModeSwitch Ở ĐÂY
+          
           _AuthField(
             controller: nameController,
             icon: Icons.alternate_email,
@@ -166,15 +154,9 @@ class _AuthPanel extends StatelessWidget {
               ),
             ),
           ),
-          if (isRegister) ...[
-            const SizedBox(height: 12),
-            _AuthField(
-              controller: confirmPasswordController,
-              icon: Icons.verified_user_outlined,
-              hintText: 'Nhập lại mật khẩu',
-              obscureText: hidePassword,
-            ),
-          ],
+          
+          // 4. ĐÃ XÓA ĐOẠN CHECK "if (isRegister) ...[" Ô NHẬP LẠI MẬT KHẨU
+          
           const SizedBox(height: 18),
           SizedBox(
             width: double.infinity,
@@ -189,9 +171,9 @@ class _AuthPanel extends StatelessWidget {
                 ),
               ),
               icon: const Icon(Icons.waves, size: 20),
-              label: Text(
-                isRegister ? 'Tạo nơi ẩn danh' : 'Vào đại dương',
-                style: const TextStyle(
+              label: const Text(
+                'Vào đại dương', // <-- Ép cứng chữ Đăng nhập luôn
+                style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w800,
                 ),
@@ -214,77 +196,7 @@ class _AuthPanel extends StatelessWidget {
   }
 }
 
-class _ModeSwitch extends StatelessWidget {
-  const _ModeSwitch({required this.isRegister, required this.onToggleMode});
-
-  final bool isRegister;
-  final VoidCallback onToggleMode;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 44,
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        children: [
-          _ModeButton(
-            label: 'Đăng nhập',
-            selected: !isRegister,
-            onTap: isRegister ? onToggleMode : null,
-          ),
-          _ModeButton(
-            label: 'Đăng ký',
-            selected: isRegister,
-            onTap: isRegister ? null : onToggleMode,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ModeButton extends StatelessWidget {
-  const _ModeButton({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String label;
-  final bool selected;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      child: Material(
-        color: selected
-            ? Colors.white.withValues(alpha: 0.14)
-            : Colors.transparent,
-        borderRadius: BorderRadius.circular(6),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(6),
-          child: Center(
-            child: Text(
-              label,
-              style: TextStyle(
-                color: selected
-                    ? Colors.white
-                    : Colors.white.withValues(alpha: 0.56),
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
+// 5. ĐÃ XÓA BỎ HOÀN TOÀN 2 CLASS _ModeSwitch VÀ _ModeButton KHỎI FILE
 
 class _AuthField extends StatelessWidget {
   const _AuthField({
@@ -319,6 +231,7 @@ class _AuthField extends StatelessWidget {
   }
 }
 
+// 6. TỐI ƯU LẠI _SoftBadge ĐỂ TỰ ĐỘNG KHÔNG BỊ TRÀN CHỮ TRÊN WEB
 class _SoftBadge extends StatelessWidget {
   const _SoftBadge({required this.icon, required this.label});
 
@@ -327,27 +240,29 @@ class _SoftBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14, color: const Color(0xFFFFA79A)),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.78),
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
+    return IntrinsicWidth(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: const Color(0xFFFFA79A)),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.78),
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

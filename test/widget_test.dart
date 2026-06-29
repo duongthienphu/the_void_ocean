@@ -1,16 +1,12 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ocean/main.dart'; // Đảm bảo đúng tên package của bạn
+import 'package:ocean/main.dart';
 
 void main() {
-  testWidgets('Ocean app smoke test', (WidgetTester tester) async {
-    // 1. Build app đại dương thay vì MyApp
+  testWidgets('Ocean app shows the login experience', (tester) async {
     await tester.pumpWidget(const VoidOceanApp());
 
-    // 2. Kiểm tra xem dòng chữ mặc định lúc chưa có chai nào có hiển thị không
-    expect(find.text('The ocean is calm. No bottles floating yet.'), findsOneWidget);
-    
-    // 3. Kiểm tra xem có cái nút bấm Vent không
-    expect(find.text('Vent to the Void'), findsOneWidget);
+    expect(find.text('Đại dương\nẩn danh'), findsOneWidget);
+    expect(find.text('Vào đại dương'), findsOneWidget);
+    expect(find.text('Text và audio'), findsOneWidget);
   });
 }
