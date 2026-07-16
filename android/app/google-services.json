@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "115000064754",
+    "project_id": "the-void-oceanv2",
+    "storage_bucket": "the-void-oceanv2.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:115000064754:android:b745e2a4e939659f95ee6b",
+        "android_client_info": {
+          "package_name": "com.example.ocean"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDBMgZW-_UAJyR6DTZMOkbnESQcbNNtJTc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

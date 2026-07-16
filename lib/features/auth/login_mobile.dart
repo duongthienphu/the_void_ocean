@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ocean/core/auth_logic.dart';
 
 class LoginMobileScreen extends StatefulWidget {
   const LoginMobileScreen({required this.onAuthenticated, super.key});
@@ -24,7 +25,61 @@ class _LoginMobileScreenState extends State<LoginMobileScreen> {
     _confirmPasswordController.dispose();
     super.dispose();
   }
+  void _handleSignUp() async {
+  final nickname = _nameController.text.trim();
+  final password = _passwordController.text.trim();
+  final confirmPassword = _confirmPasswordController.text.trim();
+  
+  if (nickname.isEmpty || password.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Vui lòng điền biệt danh và mật khẩu.')),
+    );
+    return;
+  }
 
+  if (password != confirmPassword) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Mật khẩu nhập lại không khớp.')),
+    );
+    return;
+  }
+
+  // Hiển thị vòng xoay Loading chờ phản hồi từ Firebase
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => const Center(
+      child: CircularProgressIndicator(color: Color(0xFF5EEAD4)),
+    ),
+  );
+
+  try {
+    // Gọi Service đăng ký
+    final authService = AuthService();
+    final userCred = await authService.registerWithNickname(
+      nickname: nickname,
+      password: password,
+    );
+
+    if (mounted) {
+      Navigator.of(context, rootNavigator: true).pop(); 
+    } // Tắt vòng xoay Loading
+
+    if (userCred != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Chào mừng bạn đến với Đại dương tĩnh lặng!')),
+      );
+      widget.onAuthenticated(); // Đăng ký xong, kích hoạt chuyển màn hình vào game[cite: 2]
+    }
+  } catch (e) {
+    if (mounted) Navigator.of(context).pop(); // Tắt Loading nếu thất bại
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString().replaceAll('Exception: ', ''))),
+      );
+    }
+  }
+}
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -76,17 +131,15 @@ class _LoginMobileScreenState extends State<LoginMobileScreen> {
                         ),
                         const SizedBox(height: 14),
                         _AuthPanel(
-                          isRegister: _isRegister,
-                          hidePassword: _hidePassword,
-                          nameController: _nameController,
-                          passwordController: _passwordController,
-                          confirmPasswordController: _confirmPasswordController,
-                          onToggleMode: () =>
-                              setState(() => _isRegister = !_isRegister),
-                          onTogglePassword: () =>
-                              setState(() => _hidePassword = !_hidePassword),
-                          onSubmit: widget.onAuthenticated,
-                        ),
+                        isRegister: _isRegister,
+                        hidePassword: _hidePassword,
+                        nameController: _nameController,
+                        passwordController: _passwordController,
+                        confirmPasswordController: _confirmPasswordController,
+                        onToggleMode: () => setState(() => _isRegister = !_isRegister),
+                        onTogglePassword: () => setState(() => _hidePassword = !_hidePassword),
+                        onSubmit: _isRegister ? _handleSignUp : widget.onAuthenticated, // 🔥 Thay đổi ở đây[cite: 2]
+                      ),
                       ],
                     ),
                   ),
