@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:ocean/core/game_logic.dart';
@@ -17,6 +18,14 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
   final _bubbles = List.generate(24, (_) => _Bubble());
   late final AnimationController _oceanController;
   late final List<OceanSecret> _secrets;
+
+  // Quản lý Tab hiện tại trên Mobile (0: Home/Vớt, 1: Gieo, 2: User)
+  int _currentTab = 0;
+
+  // Trạng thái UI giả lập cho luồng Vớt tâm sự
+  OceanSecret? _currentFishedSecret;
+  int _fishedCountToday = 0;
+  final int _maxFishPerDay = 15;
 
   SecretKind _draftKind = SecretKind.text;
   Timer? _recordingTimer;
@@ -54,7 +63,6 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
     if (_draftKind == SecretKind.text) {
       return _textController.text.trim().isNotEmpty;
     }
-
     return _recordingSeconds > 0;
   }
 
@@ -63,7 +71,6 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
       _recordingTimer?.cancel();
       _recordingTimer = null;
     }
-
     setState(() {
       _draftKind = kind;
       if (kind == SecretKind.text) {
@@ -77,17 +84,12 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
       _stopRecording(keepDuration: true);
       return;
     }
-
     setState(() {
       _recordingSeconds = 0;
       _isRecording = true;
     });
-
     _recordingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!mounted) {
-        return;
-      }
-
+      if (!mounted) return;
       setState(() => _recordingSeconds++);
     });
   }
@@ -106,22 +108,20 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
   }
 
   void _throwSecret() {
-    if (!_canThrow) {
-      return;
-    }
+    if (!_canThrow) return;
 
     final secret = _draftKind == SecretKind.text
         ? OceanSecret(
             body: _textController.text.trim(),
             kind: SecretKind.text,
-            drift: 'Vừa thả xuống dòng sâu',
+            drift: 'Vừa thả xuống dòng sâu di động',
             hearts: 0,
             palette: const [0xFF5EEAD4, 0xFFFFA79A],
           )
         : OceanSecret(
-            body: 'Một đoạn audio ẩn danh',
+            body: 'Một đoạn audio ẩn danh mới gieo',
             kind: SecretKind.audio,
-            drift: 'Vừa trôi khỏi bờ',
+            drift: 'Vừa trôi khỏi mạn thuyền',
             duration: Duration(seconds: _recordingSeconds),
             hearts: 0,
             palette: const [0xFFFBBF24, 0xFFA7F3D0],
@@ -142,7 +142,6 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
         content: const Text('Đã thả tâm sự vào đại dương.'),
         behavior: SnackBarBehavior.floating,
         backgroundColor: const Color(0xFF0B2B2C).withValues(alpha: 0.94),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),
     );
   }
@@ -151,6 +150,27 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
     setState(() {
       secret.isLiked = !secret.isLiked;
       secret.hearts += secret.isLiked ? 1 : -1;
+    });
+  }
+
+  // Logic UI xử lý vớt ngẫu nhiên 1 tâm sự (Tối đa 15 lần/ngày)
+  void _fishRandomSecret() {
+    if (_fishedCountToday >= _maxFishPerDay) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Hôm nay bạn đã vớt đủ 15 lần. Ngày mai quay lại nhé.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    if (_secrets.isEmpty) return;
+
+    final index = math.Random().nextInt(_secrets.length);
+    setState(() {
+      _currentFishedSecret = _secrets[index];
+      _fishedCountToday++;
     });
   }
 
@@ -166,8 +186,209 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
             children: [
               const _MobileTopBar(),
               Expanded(
-                child: ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+                child: _buildActiveTabContent(),
+              ),
+            ],
+          ),
+        ),
+      ),
+      // Thanh điều hướng dưới đáy màn hình (Bottom Navigation Bar)
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _currentTab,
+        onTap: (index) => setState(() => _currentTab = index),
+        backgroundColor: const Color(0xFF071820).withValues(alpha: 0.96),
+        selectedItemColor: const Color(0xFF5EEAD4),
+        unselectedItemColor: Colors.white38,
+        selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w900, fontSize: 12),
+        unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 11),
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.sailing_outlined),
+            activeIcon: Icon(Icons.sailing),
+            label: 'Vớt tâm sự',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.blur_on),
+            activeIcon: Icon(Icons.blur_circular),
+            label: 'Gieo tâm sự',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.face_outlined),
+            activeIcon: Icon(Icons.face),
+            label: 'Cư dân',
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Phân luồng hiển thị view theo Tab được lựa chọn
+  Widget _buildActiveTabContent() {
+    switch (_currentTab) {
+      case 0:
+        return _buildHomeTab();
+      case 1:
+        return _buildGieoTab();
+      case 2:
+        return _buildUserTab();
+      default:
+        return const SizedBox.shrink();
+    }
+  }
+
+  /// =========================================================
+  /// TAB 0: HOME PAGE - NƠI VỚT MỖI LẦN 1 TÂM SỰ (TỐI ĐA 15 LẦN)
+  /// =========================================================
+  Widget _buildHomeTab() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.05),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.bubble_chart_outlined, size: 14, color: Color(0xFF5EEAD4)),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Hôm nay: $_fishedCountToday/$_maxFishPerDay lần vớt',
+                      style: const TextStyle(fontSize: 11, color: Colors.white70, fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const Spacer(),
+          Expanded(
+            flex: 4,
+            child: Center(
+              child: _currentFishedSecret == null
+                  ? Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.all_inclusive,
+                          size: 64,
+                          color: const Color(0xFF2DD4BF).withValues(alpha: 0.22),
+                        ),
+                        const SizedBox(height: 14),
+                        const Text(
+                          'Mặt nước lặng tờ... Hãy thử vớt một điều ước.',
+                          style: TextStyle(color: Colors.white38, fontSize: 14, fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                    )
+                  : SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Padding(
+                            padding: EdgeInsets.only(left: 4, bottom: 8),
+                            child: Text(
+                              'CHAI THỦY TINH VỪA VỚT:',
+                              style: TextStyle(color: Color(0xFF5EEAD4), fontWeight: FontWeight.w900, fontSize: 11, letterSpacing: 1),
+                            ),
+                          ),
+                          _SecretBottleCard(
+                            secret: _currentFishedSecret!,
+                            controller: _oceanController,
+                            onHeart: () => _toggleHeart(_currentFishedSecret!),
+                          ),
+                        ],
+                      ),
+                    ),
+            ),
+          ),
+          const Spacer(),
+          SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: ElevatedButton.icon(
+              onPressed: _fishRandomSecret,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF5EEAD4),
+                foregroundColor: const Color(0xFF06211D),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              icon: const Icon(Icons.anchor),
+              label: const Text('Vớt 1 tâm sự ngẫu nhiên', style: TextStyle(fontWeight: FontWeight.w900)),
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
+      ),
+    );
+  }
+
+  /// =========================================================
+  /// TAB 1: GIEO PAGE - LƯU TẠI TRANG, XEM LẠI & THEO DÕI DUNG LƯỢNG
+  /// =========================================================
+  Widget _buildGieoTab() {
+    // Thông số dung lượng giả lập 20MB tương thích data lõi
+    const double maxStorageBytes = 20971520;
+    const double availableStorageBytes = 16777216; // Giả lập đã dùng 4MB còn 16MB
+    const double usedStorageBytes = maxStorageBytes - availableStorageBytes;
+    final double usagePercent = usedStorageBytes / maxStorageBytes;
+
+    return Column(
+      children: [
+        // Widget theo dõi dung lượng cho phép của cư dân
+        Container(
+          width: double.infinity,
+          margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: const Color(0xFF071820).withValues(alpha: 0.7),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.white10),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: const [
+                  Text('Kho chứa đại dương', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 12, color: Color(0xFF99F6E4))),
+                  Text('Tối đa: 20 MB', style: TextStyle(color: Colors.white38, fontSize: 11, fontWeight: FontWeight.bold)),
+                ],
+              ),
+              const SizedBox(height: 8),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: usagePercent,
+                  minHeight: 6,
+                  backgroundColor: Colors.white10,
+                  color: const Color(0xFFFFA79A),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Đã lưu: ${(usedStorageBytes / (1024 * 1024)).toStringAsFixed(2)} MB', style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                  Text('Còn trống: ${(availableStorageBytes / (1024 * 1024)).toStringAsFixed(2)} MB', style: const TextStyle(color: Color(0xFFFFA79A), fontSize: 11, fontWeight: FontWeight.bold)),
+                ],
+              ),
+            ],
+          ),
+        ),
+        
+        // Danh sách hiển thị các tâm sự đã gieo để xem lại
+        Expanded(
+          child: _secrets.isEmpty
+              ? const Center(child: Text('Đại dương trống rỗng...', style: TextStyle(color: Colors.white38)))
+              : ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                   itemCount: _secrets.length,
                   itemBuilder: (context, index) {
                     final secret = _secrets[index];
@@ -178,24 +399,158 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
                     );
                   },
                 ),
-              ),
-              _MobileComposer(
-                draftKind: _draftKind,
-                textController: _textController,
-                recordingSeconds: _recordingSeconds,
-                isRecording: _isRecording,
-                canThrow: _canThrow,
-                onKindChanged: _changeDraftKind,
-                onToggleRecording: _toggleRecording,
-                onThrow: _throwSecret,
-              ),
-            ],
-          ),
         ),
-      ),
+        
+        // Form nhập liệu gieo tâm sự giữ nguyên cấu hình mobile cũ
+        _MobileComposer(
+          draftKind: _draftKind,
+          textController: _textController,
+          recordingSeconds: _recordingSeconds,
+          isRecording: _isRecording,
+          canThrow: _canThrow,
+          onKindChanged: _changeDraftKind,
+          onToggleRecording: _toggleRecording,
+          onThrow: _throwSecret,
+        ),
+      ],
     );
   }
+
+  /// =========================================================
+  /// TAB 2: USER PAGE - CÁC TÍNH NĂNG TÀI KHOẢN & DANGER ZONE
+  /// =========================================================
+  Widget _buildUserTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          // 🟩 KHU VỰC CÀI ĐẶT THÔNG THƯỜNG
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: const Color(0xFF071820).withValues(alpha: 0.8),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.white10),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 24,
+                      backgroundColor: const Color(0xFF5EEAD4).withValues(alpha: 0.14),
+                      child: const Icon(Icons.person, color: Color(0xFF5EEAD4)),
+                    ),
+                    const SizedBox(width: 14),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: const [
+                        Text('Cư dân ẩn danh', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+                        SizedBox(height: 2),
+                        Text('Tài khoản bảo mật 2 lớp', style: TextStyle(color: Colors.white38, fontSize: 12)),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+                const Divider(color: Colors.white10),
+                const SizedBox(height: 8),
+                
+                // Tính năng Đổi Mật Khẩu UI
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.lock_reset, color: Color(0xFF99F6E4)),
+                  title: const Text('Thay đổi mã mật đạo', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                  subtitle: const Text('Thiết lập lại mật khẩu tài khoản', style: TextStyle(fontSize: 12)),
+                  trailing: const Icon(Icons.chevron_right, size: 20, color: Colors.white38),
+                  onTap: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('[UI] Mở trang đổi mật khẩu.')),
+                    );
+                  },
+                ),
+                const Divider(color: Colors.white10),
+                
+                // Tính năng Đổi Thiết Bị Mặc Định UI
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.phonelink_setup_rounded, color: Color(0xFF99F6E4)),
+                  title: const Text('Thay đổi thiết bị mặc định', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                  subtitle: const Text('Đồng bộ định danh thiết bị này làm gốc', style: TextStyle(fontSize: 12)),
+                  trailing: const Icon(Icons.chevron_right, size: 20, color: Colors.white38),
+                  onTap: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('[UI] Bật popup xác nhận đồng bộ mã Device ID mới.')),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+          
+          const SizedBox(height: 20),
+
+          // 🟥 KHU VỰC NGUY HIỂM (DANGER ZONE) - PHONG CÁCH GITHUB
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF140D0B).withValues(alpha: 0.6), // Nền hơi đỏ sẫm
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFFEF4444).withValues(alpha: 0.4), width: 1.2), // Viền cảnh báo đỏ
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: const [
+                    Icon(Icons.dangerous_outlined, color: Color(0xFFEF4444), size: 18),
+                    SizedBox(width: 8),
+                    Text(
+                      'Khu vực nguy hiểm (Danger Zone)',
+                      style: TextStyle(color: Color(0xFFEF4444), fontWeight: FontWeight.w900, fontSize: 13, letterSpacing: 0.5),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'Những hành động dưới đây sẽ xóa vĩnh viễn dữ liệu và không thể khôi phục lại. Cẩn trọng tránh bấm nhầm.',
+                  style: TextStyle(color: Colors.white38, fontSize: 11, height: 1.4),
+                ),
+                const SizedBox(height: 16),
+                
+                // Nút Xóa Tài Khoản đã được cách ly vào vùng nguy hiểm
+                SizedBox(
+                  width: double.infinity,
+                  height: 46,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('[UI] Bật popup xác nhận xóa tài khoản vĩnh viễn.')),
+                      );
+                    },
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFFFFA79A),
+                      side: const BorderSide(color: Color(0xFFEF4444), width: 0.8),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                    ),
+                    icon: const Icon(Icons.delete_forever_outlined, size: 18),
+                    label: const Text('Xóa vĩnh viễn tài khoản cư dân', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  } // Dấu ngoặc nhọn thần thánh kết thúc hàm _buildUserTab nằm ở đây nè Phú!
 }
+
+// ---------------------------------------------------------------------
+// CÁC CLASS HELPER BÊN DƯỚI ĐÃ ĐƯỢC ĐẨY RA NGOÀI NGANG HÀNG CLASS CHÍNH
+// ---------------------------------------------------------------------
 
 class _MobileTopBar extends StatelessWidget {
   const _MobileTopBar();
@@ -696,18 +1051,7 @@ class _Waveform extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final heights = [
-      8.0,
-      18.0,
-      12.0,
-      24.0,
-      15.0,
-      28.0,
-      10.0,
-      20.0,
-      14.0,
-      23.0,
-      9.0,
-      17.0,
+      8.0, 18.0, 12.0, 24.0, 15.0, 28.0, 10.0, 20.0, 14.0, 23.0, 9.0, 17.0,
     ];
 
     return SizedBox(

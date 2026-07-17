@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:ocean/core/game_logic.dart';
@@ -17,6 +18,14 @@ class _OceanWebScreenState extends State<OceanWebScreen>
   final _bubbles = List.generate(34, (_) => _Bubble());
   late final AnimationController _oceanController;
   late final List<OceanSecret> _secrets;
+
+  // Quản lý Tab hiện tại (0: Home/Vớt, 1: Gieo, 2: User)
+  int _currentTab = 0; 
+  
+  // Trạng thái UI giả lập cho tính năng Vớt tâm sự
+  OceanSecret? _currentsurfacedSecret;
+  int _fishedCountToday = 0;
+  final int _maxFishPerDay = 15;
 
   SecretKind _draftKind = SecretKind.text;
   Timer? _recordingTimer;
@@ -54,20 +63,12 @@ class _OceanWebScreenState extends State<OceanWebScreen>
     if (_draftKind == SecretKind.text) {
       return _textController.text.trim().isNotEmpty;
     }
-
     return _recordingSeconds > 0;
   }
-
-  int get _audioCount =>
-      _secrets.where((secret) => secret.kind == SecretKind.audio).length;
-
-  int get _heartCount =>
-      _secrets.fold<int>(0, (total, secret) => total + secret.hearts);
 
   void _changeDraftKind(SecretKind kind) {
     _recordingTimer?.cancel();
     _recordingTimer = null;
-
     setState(() {
       _draftKind = kind;
       if (kind == SecretKind.text) {
@@ -83,12 +84,10 @@ class _OceanWebScreenState extends State<OceanWebScreen>
       setState(() => _isRecording = false);
       return;
     }
-
     setState(() {
       _recordingSeconds = 0;
       _isRecording = true;
     });
-
     _recordingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) {
         setState(() => _recordingSeconds++);
@@ -97,22 +96,20 @@ class _OceanWebScreenState extends State<OceanWebScreen>
   }
 
   void _throwSecret() {
-    if (!_canThrow) {
-      return;
-    }
+    if (!_canThrow) return;
 
     final secret = _draftKind == SecretKind.text
         ? OceanSecret(
             body: _textController.text.trim(),
             kind: SecretKind.text,
-            drift: 'Vừa rời khỏi bến web',
+            drift: 'Vừa thả xuống từ tọa độ Web',
             hearts: 0,
             palette: const [0xFF5EEAD4, 0xFFFFA79A],
           )
         : OceanSecret(
-            body: 'Một đoạn audio ẩn danh',
+            body: 'Một đoạn audio ẩn danh mới gieo',
             kind: SecretKind.audio,
-            drift: 'Âm thanh trôi dưới mặt nước',
+            drift: 'Âm thanh chìm sâu dưới đáy biển',
             duration: Duration(seconds: _recordingSeconds),
             hearts: 0,
             palette: const [0xFFFBBF24, 0xFFA7F3D0],
@@ -130,10 +127,9 @@ class _OceanWebScreenState extends State<OceanWebScreen>
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: const Text('Tâm sự đã được thả vào đại dương.'),
+        content: const Text('Tâm sự của bạn đã hòa vào dòng chảy đại dương.'),
         behavior: SnackBarBehavior.floating,
         backgroundColor: const Color(0xFF0B2B2C).withValues(alpha: 0.94),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),
     );
   }
@@ -145,15 +141,24 @@ class _OceanWebScreenState extends State<OceanWebScreen>
     });
   }
 
+  // Xử lý logic UI vớt ngẫu nhiên 1 tâm sự (Tối đa 15 lần/ngày)
   void _surfaceRandomSecret() {
-    if (_secrets.length < 2) {
+    if (_fishedCountToday >= _maxFishPerDay) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Hôm nay bạn đã vớt đủ 15 tâm sự. Hãy quay lại vào ngày mai nhé.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
       return;
     }
 
-    final index = math.Random().nextInt(_secrets.length - 1) + 1;
+    if (_secrets.isEmpty) return;
+
+    final index = math.Random().nextInt(_secrets.length);
     setState(() {
-      final secret = _secrets.removeAt(index);
-      _secrets.insert(0, secret);
+      _currentsurfacedSecret = _secrets[index];
+      _fishedCountToday++;
     });
   }
 
@@ -164,50 +169,471 @@ class _OceanWebScreenState extends State<OceanWebScreen>
         controller: _oceanController,
         bubbles: _bubbles,
         child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+          child: Row(
+            children: [
+              // Thanh Menu Điều Hướng Trái (Navigation Rail) cực kỳ hiện đại
+              NavigationRail(
+                selectedIndex: _currentTab,
+                onDestinationSelected: (index) => setState(() => _currentTab = index),
+                backgroundColor: const Color(0xFF071820).withValues(alpha: 0.42),
+                indicatorColor: const Color(0xFF2DD4BF).withValues(alpha: 0.24),
+                unselectedIconTheme: const IconThemeData(color: Colors.white54),
+                selectedIconTheme: const IconThemeData(color: Color(0xFF5EEAD4)),
+                labelType: NavigationRailLabelType.all,
+                selectedLabelTextStyle: const TextStyle(
+                  color: Color(0xFF5EEAD4),
+                  fontWeight: FontWeight.w900,
+                  fontSize: 12,
+                ),
+                unselectedLabelTextStyle: const TextStyle(
+                  color: Colors.white54,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 11,
+                ),
+                leading: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 20),
+                  child: Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF5EEAD4).withValues(alpha: 0.16),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(Icons.waves, color: Color(0xFF99F6E4)),
+                  ),
+                ),
+                destinations: const [
+                  NavigationRailDestination(
+                    icon: Icon(Icons.sailing_outlined),
+                    selectedIcon: Icon(Icons.sailing),
+                    label: Text('Vớt Tâm Sự'),
+                  ),
+                  NavigationRailDestination(
+                    icon: Icon(Icons.blur_on),
+                    selectedIcon: Icon(Icons.blur_circular),
+                    label: Text('Gieo Niềm Riêng'),
+                  ),
+                  NavigationRailDestination(
+                    icon: Icon(Icons.face_outlined),
+                    selectedIcon: Icon(Icons.face),
+                    label: Text('Cư Dân'),
+                  ),
+                ],
+              ),
+              const VerticalDivider(width: 1, color: Colors.white12),
+              
+              // Vùng nội dung động thay đổi theo Tab được bấm chọn
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: _buildActiveTabContent(),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Phân luồng vẽ giao diện dựa trên Tab đang chọn
+  Widget _buildActiveTabContent() {
+    switch (_currentTab) {
+      case 0:
+        return _buildHomeTab();
+      case 1:
+        return _buildGieoTab();
+      case 2:
+        return _buildUserTab();
+      default:
+        return const SizedBox.shrink();
+    }
+  }
+
+  /// ==========================================
+  /// TAB 1: HOME PAGE - NƠI VỚT TÂM SỰ MỖI LẦN 1 CÁI
+  /// ==========================================
+  Widget _buildHomeTab() {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          flex: 3,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Đáy đại dương tĩnh lặng',
+                        style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Mỗi lần chỉ vớt một chai thủy tinh chứa nỗi niềm ẩn danh.',
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.52),
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                  _SoftBadge(
+                    icon: Icons.hourglass_bottom,
+                    label: 'Hôm nay: $_fishedCountToday / $_maxFishPerDay lần vớt',
+                  ),
+                ],
+              ),
+              const SizedBox(height: 40),
+              Expanded(
+                child: Center(
+                  child: _currentsurfacedSecret == null
+                      ? Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.all_inclusive,
+                              size: 72,
+                              color: const Color(0xFF2DD4BF).withValues(alpha: 0.3),
+                            ),
+                            const SizedBox(height: 18),
+                            const Text(
+                              'Đại dương mênh mông... Bạn muốn vớt thử điều gì không?',
+                              style: TextStyle(color: Colors.white54, fontSize: 16),
+                            ),
+                          ],
+                        )
+                      : ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 680),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              const Text(
+                                'TÂM SỰ BẠN VỪA VỚT ĐƯỢC:',
+                                style: TextStyle(
+                                  color: Color(0xFF5EEAD4),
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 1.5,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              const SizedBox(height: 14),
+                              _WebSecretCard(
+                                secret: _currentsurfacedSecret!,
+                                controller: _oceanController,
+                                onHeart: () => _toggleHeart(_currentsurfacedSecret!),
+                              ),
+                            ],
+                          ),
+                        ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 24),
+        SizedBox(
+          width: 280,
+          child: Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: const Color(0xFF071820).withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.white10),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                SizedBox(
-                  width: 270,
-                  child: _SidePanel(
-                    total: _secrets.length,
-                    audioCount: _audioCount,
-                    hearts: _heartCount,
-                    onRandom: _surfaceRandomSecret,
-                  ),
+                const Icon(Icons.sailing, size: 48, color: Color(0xFF5EEAD4)),
+                const SizedBox(height: 16),
+                const Text(
+                  'Thả neo vớt ký ức',
+                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18),
                 ),
-                const SizedBox(width: 22),
-                Expanded(
-                  child: _OceanStream(
-                    secrets: _secrets,
-                    controller: _oceanController,
-                    onHeart: _toggleHeart,
-                  ),
+                const SizedBox(height: 10),
+                const Text(
+                  'Sóng biển sẽ đưa một chai thủy tinh ngẫu nhiên dạt vào mạn thuyền của bạn.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white60, fontSize: 13, height: 1.4),
                 ),
-                const SizedBox(width: 22),
+                const SizedBox(height: 28),
                 SizedBox(
-                  width: 380,
-                  child: _WebComposer(
-                    draftKind: _draftKind,
-                    textController: _textController,
-                    recordingSeconds: _recordingSeconds,
-                    isRecording: _isRecording,
-                    canThrow: _canThrow,
-                    onKindChanged: _changeDraftKind,
-                    onToggleRecording: _toggleRecording,
-                    onThrow: _throwSecret,
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton.icon(
+                    onPressed: _surfaceRandomSecret,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF5EEAD4),
+                      foregroundColor: const Color(0xFF06211D),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                    icon: const Icon(Icons.anchor_outlined),
+                    label: const Text('Vớt Ngay', style: TextStyle(fontWeight: FontWeight.w900)),
                   ),
                 ),
               ],
             ),
           ),
         ),
+      ],
+    );
+  }
+
+  /// ==========================================
+  /// TAB 2: GIEO PAGE - NƠI SOẠN THẢO VÀ XEM DUNG LƯỢNG
+  /// ==========================================
+  Widget _buildGieoTab() {
+    // Thông số giả lập hệ thống lưu trữ dung lượng 20MB
+    const double maxStorageBytes = 20971520; 
+    const double availableStorageBytes = 14680064; // Giả lập user đã xài hết 6MB còn trống 14MB
+    const double usedStorageBytes = maxStorageBytes - availableStorageBytes;
+    final double usagePercent = usedStorageBytes / maxStorageBytes;
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Cột hiển thị lịch sử các tâm sự bạn đã gieo tại máy
+        Expanded(
+          flex: 3,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Ký ức của bạn',
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Những nỗi niềm bạn đã gửi lại cho lòng đại dương lưu giữ.',
+                style: TextStyle(color: Colors.white54, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 20),
+              Expanded(
+                child: _secrets.isEmpty
+                    ? const Center(child: Text('Bạn chưa từng gieo tâm sự nào.', style: TextStyle(color: Colors.white38)))
+                    : ListView.builder(
+                        itemCount: _secrets.length,
+                        itemBuilder: (context, index) {
+                          final secret = _secrets[index];
+                          return _WebSecretCard(
+                            secret: secret,
+                            controller: _oceanController,
+                            onHeart: () => _toggleHeart(secret),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 24),
+        // Cột phải: Form nhập liệu tích hợp Widget quản lý dung lượng
+        SizedBox(
+          width: 400,
+          child: Column(
+            children: [
+              // Panel quản lý không gian đĩa (Storage Tracker)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF071820).withValues(alpha: 0.8),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.white10),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: const [
+                        Text('Khoảng trống linh hồn', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13, color: Color(0xFF99F6E4))),
+                        Text('Giới hạn: 20 MB', style: TextStyle(color: Colors.white38, fontSize: 11, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: LinearProgressIndicator(
+                        value: usagePercent,
+                        minHeight: 8,
+                        backgroundColor: Colors.white10,
+                        color: const Color(0xFFFFA79A),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'Đã dùng: ${(usedStorageBytes / (1024 * 1024)).toStringAsFixed(2)} MB',
+                          style: const TextStyle(color: Colors.white60, fontSize: 12),
+                        ),
+                        Text(
+                          'Còn trống: ${(availableStorageBytes / (1024 * 1024)).toStringAsFixed(2)} MB',
+                          style: const TextStyle(color: Color(0xFFFFA79A), fontSize: 12, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              // Bộ soạn thảo tâm sự kế thừa của Phú
+              Expanded(
+                child: _WebComposer(
+                  draftKind: _draftKind,
+                  textController: _textController,
+                  recordingSeconds: _recordingSeconds,
+                  isRecording: _isRecording,
+                  canThrow: _canThrow,
+                  onKindChanged: _changeDraftKind,
+                  onToggleRecording: _toggleRecording,
+                  onThrow: _throwSecret,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// ==========================================
+  /// TAB 3: USER PAGE - QUẢN LÝ CÀI ĐẶT TÀI KHOẢN
+  /// ==========================================
+  Widget _buildUserTab() {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 580),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(28),
+              decoration: BoxDecoration(
+                color: const Color(0xFF071820).withValues(alpha: 0.8),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white10),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 30,
+                        backgroundColor: const Color(0xFF5EEAD4).withValues(alpha: 0.16),
+                        child: const Icon(Icons.person, color: Color(0xFF5EEAD4), size: 32),
+                      ),
+                      const SizedBox(width: 16),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: const [
+                          Text('Cư dân ẩn danh', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+                          SizedBox(height: 4),
+                          Text('Trạng thái hệ thống: An toàn', style: TextStyle(color: Colors.white38, fontSize: 13)),
+                        ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 32),
+                  const Divider(color: Colors.white10),
+                  const SizedBox(height: 16),
+
+                  // Tính năng Đổi Mật Khẩu
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.lock_reset, color: Color(0xFF99F6E4)),
+                    title: const Text('Thay đổi mã khóa mật đạo', style: TextStyle(fontWeight: FontWeight.bold)),
+                    subtitle: const Text('Đổi mật khẩu tài khoản truy cập vào đại dương'),
+                    trailing: const Icon(Icons.chevron_right, color: Colors.white38),
+                    onTap: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('[UI] Bật popup đổi mật khẩu.')),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            // 🟥 KHU VỰC NGUY HIỂM (DANGER ZONE) - PHONG CÁCH GITHUB, đồng bộ với bản mobile
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: const Color(0xFF140D0B).withValues(alpha: 0.6), // Nền hơi đỏ sẫm
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFEF4444).withValues(alpha: 0.4), width: 1.2), // Viền cảnh báo đỏ
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: const [
+                      Icon(Icons.dangerous_outlined, color: Color(0xFFEF4444), size: 20),
+                      SizedBox(width: 8),
+                      Text(
+                        'Khu vực nguy hiểm (Danger Zone)',
+                        style: TextStyle(color: Color(0xFFEF4444), fontWeight: FontWeight.w900, fontSize: 14, letterSpacing: 0.5),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    'Những hành động dưới đây sẽ xóa vĩnh viễn dữ liệu và không thể khôi phục lại. Cẩn trọng tránh bấm nhầm.',
+                    style: TextStyle(color: Colors.white38, fontSize: 12, height: 1.4),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Nút Xóa Tài Khoản đã được cách ly vào vùng nguy hiểm, đồng bộ với bản mobile
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('[UI] Bật hộp thoại cảnh báo xóa vĩnh viễn nick.')),
+                        );
+                      },
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFFFFA79A),
+                        side: const BorderSide(color: Color(0xFFEF4444), width: 0.8),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                      ),
+                      icon: const Icon(Icons.delete_forever_outlined, size: 18),
+                      label: const Text('Tan biến khỏi đại dương (Xóa vĩnh viễn tài khoản)', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 }
+
+// ---------------------------------------------------------------------
+// Phú giữ nguyên toàn bộ các Widget con bổ trợ bên dưới của bạn nhen
+// (_SidePanel, _StatTile, _OceanStream, _WebComposer, _DraftKindButton, v.v.)
+// ---------------------------------------------------------------------
 
 class _SidePanel extends StatelessWidget {
   const _SidePanel({
@@ -634,7 +1060,7 @@ class _AudioDraft extends StatelessWidget {
                       ? const Color(0xFFFFA79A)
                       : const Color(0xFF5EEAD4),
                   foregroundColor: isRecording
-                      ? const Color(0xFF2B0B08)
+                      ? const Color(0xFF06211D)
                       : const Color(0xFF06211D),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(8),
@@ -875,20 +1301,7 @@ class _Waveform extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final heights = [
-      8.0,
-      22.0,
-      13.0,
-      30.0,
-      16.0,
-      26.0,
-      10.0,
-      24.0,
-      14.0,
-      28.0,
-      9.0,
-      20.0,
-      12.0,
-      18.0,
+      8.0, 22.0, 13.0, 30.0, 16.0, 26.0, 10.0, 24.0, 14.0, 28.0, 9.0, 20.0, 12.0, 18.0,
     ];
 
     return SizedBox(
