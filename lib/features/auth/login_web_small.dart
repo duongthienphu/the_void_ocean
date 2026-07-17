@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-
+import 'package:ocean/core/auth_logic.dart';
 class LoginWebSmallScreen extends StatefulWidget {
   const LoginWebSmallScreen({required this.onAuthenticated, super.key});
 
@@ -20,6 +20,50 @@ class _LoginWebSmallScreenState extends State<LoginWebSmallScreen> {
     _nameController.dispose();
     _passwordController.dispose();
     super.dispose();
+  }
+  void _handleSignIn() async {
+    final nickname = _nameController.text.trim();
+    final password = _passwordController.text.trim();
+
+    if (nickname.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Vui lòng điền biệt danh và mật khẩu.')),
+      );
+      return;
+    }
+
+    // Mở vòng xoay đợi Firebase phản hồi
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: CircularProgressIndicator(color: Color(0xFF5EEAD4)),
+      ),
+    );
+
+    try {
+      final authService = AuthService();
+      final userCred = await authService.signInWithNickname(
+        nickname: nickname,
+        password: password,
+      );
+
+      if (mounted) Navigator.of(context, rootNavigator: true).pop(); // Tắt Loading
+
+      if (userCred != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Chào mừng cư dân quay trở lại!')),
+        );
+        widget.onAuthenticated(); // Xác thực xong, đẩy vào game chính!
+      }
+    } catch (e) {
+      if (mounted) Navigator.of(context, rootNavigator: true).pop(); // Tắt Loading nếu lỗi
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString().replaceAll('Exception: ', ''))),
+        );
+      }
+    }
   }
 
   @override
@@ -79,7 +123,7 @@ class _LoginWebSmallScreenState extends State<LoginWebSmallScreen> {
                           passwordController: _passwordController,
                           onTogglePassword: () =>
                               setState(() => _hidePassword = !_hidePassword),
-                          onSubmit: widget.onAuthenticated,
+                          onSubmit: _handleSignIn,
                         ),
                       ],
                     ),
