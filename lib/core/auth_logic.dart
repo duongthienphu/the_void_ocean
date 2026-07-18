@@ -87,11 +87,23 @@ class AuthService {
         throw Exception('Không thể định danh thiết bị. Không được phép tạo tài khoản.');
       }
 
+      //THÊM ĐIỀU KIỆN KIỂM TRA TRÙNG DEVICE ID TRÊN FIRESTORE
+      final QuerySnapshot duplicateDevices = await _firestore
+          .collection('users')
+          .where('deviceId', isEqualTo: deviceId)
+          .limit(1)
+          .get();
+          
       // 3. Tạo tài khoản trên Firebase Authentication
       UserCredential userCredential = await _auth.createUserWithEmailAndPassword(
         email: customEmail,
         password: password,
       );
+
+      // Nếu tìm thấy bất kỳ bản ghi nào trùng deviceId, chặn đứng luồng đăng ký[cite: 3]
+      if (duplicateDevices.docs.isNotEmpty) {
+        throw Exception('DEVICE_LINKED_ANOTHER_OCEAN');
+      }
 
       // 3. Tạo Document lưu thông tin hiển thị sang Firestore bằng UID vừa sinh ra[cite: 2, 3]
       if (userCredential.user != null) {
@@ -116,7 +128,7 @@ class AuthService {
       }
       throw Exception(e.message ?? 'Đã xảy ra lỗi xác thực.');
     } catch (e) {
-      throw Exception('Không thể kết nối đến máy chủ: $e');
+      rethrow;
     }
   }
 }

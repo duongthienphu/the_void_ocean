@@ -74,8 +74,12 @@ class _LoginMobileScreenState extends State<LoginMobileScreen> {
   } catch (e) {
     if (mounted) Navigator.of(context).pop(); // Tắt Loading nếu thất bại
     if (mounted) {
+      String errorMsg = e.toString().replaceAll('Exception: ', '');
+      if (errorMsg == 'DEVICE_LINKED_ANOTHER_OCEAN') {
+        errorMsg = 'Thiết bị đã liên kết với vùng biển khác.';
+      }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString().replaceAll('Exception: ', ''))),
+        SnackBar(content: Text(errorMsg)),
       );
     }
   }
