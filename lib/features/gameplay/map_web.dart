@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:math' as math;
-import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:ocean/core/game_logic.dart';
@@ -100,6 +99,8 @@ class _OceanWebScreenState extends State<OceanWebScreen>
 
     final secret = _draftKind == SecretKind.text
         ? OceanSecret(
+            id: '001',
+            senderUid: '001',
             body: _textController.text.trim(),
             kind: SecretKind.text,
             drift: 'Vừa thả xuống từ tọa độ Web',
@@ -107,6 +108,8 @@ class _OceanWebScreenState extends State<OceanWebScreen>
             palette: const [0xFF5EEAD4, 0xFFFFA79A],
           )
         : OceanSecret(
+            id: '001',
+            senderUid: '001',
             body: 'Một đoạn audio ẩn danh mới gieo',
             kind: SecretKind.audio,
             drift: 'Âm thanh chìm sâu dưới đáy biển',

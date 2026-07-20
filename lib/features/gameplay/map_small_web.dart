@@ -1,25 +1,23 @@
 import 'dart:async';
 import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:ocean/core/game_logic.dart';
-import 'package:ocean/core/cloud_secret_service.dart';
-import 'package:ocean/core/audio_secret_manager.dart';
 
-class OceanMobileScreen extends StatefulWidget {
-  const OceanMobileScreen({super.key});
+
+class OceanSmallWebScreen extends StatefulWidget {
+  const OceanSmallWebScreen({super.key});
 
   @override
-  State<OceanMobileScreen> createState() => _OceanMobileScreenState();
+  State<OceanSmallWebScreen> createState() => _OceanSmallWebScreenState();
 }
 
-class _OceanMobileScreenState extends State<OceanMobileScreen>
+class _OceanSmallWebScreenState extends State<OceanSmallWebScreen>
     with SingleTickerProviderStateMixin {
   final _textController = TextEditingController();
   final _bubbles = List.generate(24, (_) => _Bubble());
   late final AnimationController _oceanController;
   late final List<OceanSecret> _secrets;
-  final CloudSecretService _cloudSecretService = CloudSecretService();
-  final AudioSecretManager _globalAudioManager = AudioSecretManager();
 
   // Quản lý Tab hiện tại trên Mobile (0: Home/Vớt, 1: Gieo, 2: User)
   int _currentTab = 0;
@@ -52,7 +50,6 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
       ..removeListener(_refreshDraft)
       ..dispose();
     _oceanController.dispose();
-    _globalAudioManager.dispose();
     super.dispose();
   }
 
@@ -161,59 +158,26 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
   }
 
   // Logic UI xử lý vớt ngẫu nhiên 1 tâm sự (Tối đa 15 lần/ngày)
-  Future<void> _fishRandomSecret() async {
-    await _globalAudioManager.disposePlayer();
-    const String currentUserId = "XzFsCj4B9Jb1RLm3httqCUjG7CE3";
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(
-        child: CircularProgressIndicator(color: Color(0xFF5EEAD4)),
-      ),
-    );
-    try {
-      // 3. Gọi hàm thuật toán vớt chai từ CloudSecretService về
-      final OceanSecret? fishedSecret = await _cloudSecretService.fishRandomSecret(
-        currentUserId: currentUserId,
+  void _fishRandomSecret() {
+    if (_fishedCountToday >= _maxFishPerDay) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Hôm nay bạn đã vớt đủ 15 lần. Ngày mai quay lại nhé.'),
+          behavior: SnackBarBehavior.floating,
+        ),
       );
-
-      // Tắt Loading sau khi Firestore phản hồi xong dữ liệu
-      if (mounted) Navigator.of(context).pop();
-
-      // 4. Xử lý kết quả trả về để đưa ra giao diện công khai
-      if (fishedSecret == null) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Đại dương hôm nay lặng sóng, không vớt được chai nào của người lạ rồi!'),
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        }
-      } else {
-        // Vớt thành công -> Cập nhật Object vào UI để widget _SecretBottleCard tự động vẽ
-        setState(() {
-          _currentFishedSecret = fishedSecret;
-          // Đồng bộ tạm số lượt hiển thị nhanh trên thanh TopBar
-          _fishedCountToday++; 
-        });
-      }
-    } catch (e) {
-      // Tắt Loading nếu lỡ xảy ra lỗi hệ thống hoặc chạm ngưỡng 15 lượt
-      if (mounted) Navigator.of(context).pop();
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            // Hiển thị nguyên văn chuỗi lỗi "Đã vớt đủ 15 thông điệp" bắn từ Firestore ra ngoài
-            content: Text(e.toString().replaceAll('Exception: ', '')),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: const Color(0xFFEF4444).withValues(alpha: 0.9),
-          ),
-        );
-      }
+      return;
     }
+
+    if (_secrets.isEmpty) return;
+
+    final index = math.Random().nextInt(_secrets.length);
+    setState(() {
+      _currentFishedSecret = _secrets[index];
+      _fishedCountToday++;
+    });
   }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -339,10 +303,8 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
                             ),
                           ),
                           _SecretBottleCard(
-                            key: ValueKey(_currentFishedSecret!.id),
                             secret: _currentFishedSecret!,
                             controller: _oceanController,
-                            audioManager: _globalAudioManager,
                             onHeart: () => _toggleHeart(_currentFishedSecret!),
                           ),
                         ],
@@ -437,7 +399,6 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
                     return _SecretBottleCard(
                       secret: secret,
                       controller: _oceanController,
-                      audioManager: _globalAudioManager,
                       onHeart: () => _toggleHeart(secret),
                     );
                   },
@@ -460,139 +421,80 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
   }
 
   /// =========================================================
-  /// TAB 2: USER PAGE - CÁC TÍNH NĂNG TÀI KHOẢN & DANGER ZONE
+  /// TAB 2: USER PAGE - CÁC TÍNH NĂNG ĐỔI MẬT KHẨU, XÓA ACCOUNT
   /// =========================================================
   Widget _buildUserTab() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
-      child: Column(
-        children: [
-          // 🟩 KHU VỰC CÀI ĐẶT THÔNG THƯỜNG
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: const Color(0xFF071820).withValues(alpha: 0.8),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.white10),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: const Color(0xFF071820).withValues(alpha: 0.8),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.white10),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
               children: [
-                Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 24,
-                      backgroundColor: const Color(0xFF5EEAD4).withValues(alpha: 0.14),
-                      child: const Icon(Icons.person, color: Color(0xFF5EEAD4)),
-                    ),
-                    const SizedBox(width: 14),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: const [
-                        Text('Cư dân ẩn danh', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
-                        SizedBox(height: 2),
-                        Text('Tài khoản bảo mật 2 lớp', style: TextStyle(color: Colors.white38, fontSize: 12)),
-                      ],
-                    ),
-                  ],
+                CircleAvatar(
+                  radius: 24,
+                  backgroundColor: const Color(0xFF5EEAD4).withValues(alpha: 0.14),
+                  child: const Icon(Icons.person, color: Color(0xFF5EEAD4)),
                 ),
-                const SizedBox(height: 24),
-                const Divider(color: Colors.white10),
-                const SizedBox(height: 8),
-                
-                // Tính năng Đổi Mật Khẩu UI
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.lock_reset, color: Color(0xFF99F6E4)),
-                  title: const Text('Thay đổi mã mật đạo', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                  subtitle: const Text('Thiết lập lại mật khẩu tài khoản', style: TextStyle(fontSize: 12)),
-                  trailing: const Icon(Icons.chevron_right, size: 20, color: Colors.white38),
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('[UI] Mở trang đổi mật khẩu.')),
-                    );
-                  },
-                ),
-                const Divider(color: Colors.white10),
-                
-                // Tính năng Đổi Thiết Bị Mặc Định UI
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.phonelink_setup_rounded, color: Color(0xFF99F6E4)),
-                  title: const Text('Thay đổi thiết bị mặc định', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                  subtitle: const Text('Đồng bộ định danh thiết bị này làm gốc', style: TextStyle(fontSize: 12)),
-                  trailing: const Icon(Icons.chevron_right, size: 20, color: Colors.white38),
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('[UI] Bật popup xác nhận đồng bộ mã Device ID mới.')),
-                    );
-                  },
-                ),
-              ],
-            ),
-          ),
-          
-          const SizedBox(height: 20),
-
-          // 🟥 KHU VỰC NGUY HIỂM (DANGER ZONE) - PHONG CÁCH GITHUB
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: const Color(0xFF140D0B).withValues(alpha: 0.6), // Nền hơi đỏ sẫm
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFFEF4444).withValues(alpha: 0.4), width: 1.2), // Viền cảnh báo đỏ
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+                const SizedBox(width: 14),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: const [
-                    Icon(Icons.dangerous_outlined, color: Color(0xFFEF4444), size: 18),
-                    SizedBox(width: 8),
-                    Text(
-                      'Khu vực nguy hiểm (Danger Zone)',
-                      style: TextStyle(color: Color(0xFFEF4444), fontWeight: FontWeight.w900, fontSize: 13, letterSpacing: 0.5),
-                    ),
+                    Text('Cư dân ẩn danh', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+                    SizedBox(height: 2),
+                    Text('Tài khoản bảo mật 2 lớp', style: TextStyle(color: Colors.white38, fontSize: 12)),
                   ],
-                ),
-                const SizedBox(height: 10),
-                const Text(
-                  'Những hành động dưới đây sẽ xóa vĩnh viễn dữ liệu và không thể khôi phục lại. Cẩn trọng tránh bấm nhầm.',
-                  style: TextStyle(color: Colors.white38, fontSize: 11, height: 1.4),
-                ),
-                const SizedBox(height: 16),
-                
-                // Nút Xóa Tài Khoản đã được cách ly vào vùng nguy hiểm
-                SizedBox(
-                  width: double.infinity,
-                  height: 46,
-                  child: OutlinedButton.icon(
-                    onPressed: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('[UI] Bật popup xác nhận xóa tài khoản vĩnh viễn.')),
-                      );
-                    },
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFFFFA79A),
-                      side: const BorderSide(color: Color(0xFFEF4444), width: 0.8),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-                    ),
-                    icon: const Icon(Icons.delete_forever_outlined, size: 18),
-                    label: const Text('Xóa vĩnh viễn tài khoản cư dân', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
-                  ),
                 ),
               ],
             ),
-          ),
-        ],
+            const SizedBox(height: 24),
+            const Divider(color: Colors.white10),
+            const SizedBox(height: 8),
+            
+            // Tính năng Đổi Mật Khẩu UI
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.lock_reset, color: Color(0xFF99F6E4)),
+              title: const Text('Thay đổi mã mật đạo', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+              subtitle: const Text('Thiết lập lại mật khẩu tài khoản', style: TextStyle(fontSize: 12)),
+              trailing: const Icon(Icons.chevron_right, size: 20, color: Colors.white38),
+              onTap: () {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('[UI] Mở trang đổi mật khẩu.')),
+                );
+              },
+            ),
+            
+            // Tính năng Xóa Tài Khoản UI
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.delete_forever_outlined, color: Color(0xFFFFA79A)),
+              title: const Text('Xóa dấu vết (Xóa nick)', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFFFA79A), fontSize: 14)),
+              subtitle: const Text('Rời bỏ đại dương, xóa vĩnh viễn data', style: TextStyle(fontSize: 12)),
+              trailing: const Icon(Icons.chevron_right, size: 20, color: Color(0xFFFFA79A)),
+              onTap: () {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('[UI] Bật popup xác nhận xóa tài khoản.')),
+                );
+              },
+            ),
+          ],
+        ),
       ),
     );
-  } // Dấu ngoặc nhọn thần thánh kết thúc hàm _buildUserTab nằm ở đây nè Phú!
+  }
 }
 
 // ---------------------------------------------------------------------
-// CÁC CLASS HELPER BÊN DƯỚI ĐÃ ĐƯỢC ĐẨY RA NGOÀI NGANG HÀNG CLASS CHÍNH
+// Giữ nguyên 100% tất cả các Widget phụ trợ bên dưới của Phú để tránh lỗi compile
+// (_MobileTopBar, _MobileComposer, _DraftKindButton, _AudioDraft, _SecretBottleCard, _TextSecret, _AudioSecret, _HeartButton, _Waveform, _AnimatedOcean, _Bubble)
 // ---------------------------------------------------------------------
 
 class _MobileTopBar extends StatelessWidget {
@@ -897,16 +799,13 @@ class _AudioDraft extends StatelessWidget {
 
 class _SecretBottleCard extends StatelessWidget {
   const _SecretBottleCard({
-    super.key,
     required this.secret,
     required this.controller,
-    required this.audioManager,
     required this.onHeart,
   });
 
   final OceanSecret secret;
   final AnimationController controller;
-  final AudioSecretManager audioManager;
   final VoidCallback onHeart;
 
   @override
@@ -952,7 +851,7 @@ class _SecretBottleCard extends StatelessWidget {
                 const SizedBox(width: 12),
                 Expanded(
                   child: secret.kind == SecretKind.audio
-                      ? _AudioSecret(secret: secret, audioManager: audioManager)
+                      ? _AudioSecret(secret: secret)
                       : _TextSecret(secret: secret),
                 ),
               ],
@@ -1000,141 +899,42 @@ class _TextSecret extends StatelessWidget {
   }
 }
 
-class _AudioSecret extends StatefulWidget {
-  const _AudioSecret({required this.secret, required this.audioManager}); 
+class _AudioSecret extends StatelessWidget {
+  const _AudioSecret({required this.secret});
+
   final OceanSecret secret;
-  final AudioSecretManager audioManager;
-
-  @override
-  State<_AudioSecret> createState() => _AudioSecretState();
-}
-
-class _AudioSecretState extends State<_AudioSecret> {
-
-  final ValueNotifier<Duration> _positionNotifier = ValueNotifier(Duration.zero);
-  final ValueNotifier<Duration> _durationNotifier = ValueNotifier(Duration.zero);
-  bool _disposed = false;
-
- @override
-  void initState() {
-    super.initState();
-    _initAudioForCard();
-  }
-
-  @override
-  void didUpdateWidget(_AudioSecret oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    _initAudioForCard();
-  }
-
-  void _initAudioForCard() {
-    _positionNotifier.value = Duration.zero;
-    _durationNotifier.value = Duration.zero;
-    if (widget.secret.audioUrl != null) {
-      // Gọi kết nối trực tiếp vào manager tập trung ở tầng cha truyền xuống
-      widget.audioManager.initAudio(
-        url: widget.secret.audioUrl!,
-        onStateChanged: () {
-          if (_disposed || !mounted) return;
-
-          _positionNotifier.value = widget.audioManager.currentPosition;
-          if (widget.audioManager.totalDuration != Duration.zero) {
-            _durationNotifier.value = widget.audioManager.totalDuration;
-          }
-          
-          setState(() {});
-        },
-      );
-    }
-  }
-
-  @override
-  void dispose() {
-    // Đánh dấu đã dispose TRƯỚC TIÊN để chặn callback đến trễ
-    _disposed = true;
-    _positionNotifier.dispose();
-    _durationNotifier.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Chữ nội dung đi kèm audio
         Text(
-          widget.secret.body,
+          secret.body,
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
             color: const Color(0xFFEAF6F4),
             fontWeight: FontWeight.w800,
           ),
         ),
-        const SizedBox(height: 10), // Hộp trống tạo khoảng cách 10 pixel
-        
-        // BỘ LIÊN KẾT ĐIỀU KHIỂN ÂM THANH REALTIME
+        const SizedBox(height: 10),
         Row(
           children: [
-            // Nút bấm Play/Pause đổi icon động theo trạng thái của Manager
-            IconButton(
-              icon: Icon(
-                widget.audioManager.isPlaying ? Icons.pause_circle_filled_rounded : Icons.play_arrow_rounded,
-                color: const Color(0xFFFFA79A),
-                size: 28,
-              ), 
-              onPressed: () => widget.audioManager.togglePlay(),
-            ),
-            
-            // Thanh Slider cô lập tuyệt đối bằng ValueListenableBuilder chống kẹt lệnh
-            Expanded(
-              child: ValueListenableBuilder<Duration>(
-                valueListenable: _durationNotifier,
-                builder: (context, totalDuration, _) {
-                  return ValueListenableBuilder<Duration>(
-                    valueListenable: _positionNotifier,
-                    builder: (context, currentPosition, _) {
-                      final double maxVal = totalDuration.inMilliseconds.toDouble() > 0
-                          ? totalDuration.inMilliseconds.toDouble()
-                          : (widget.secret.duration?.inMilliseconds.toDouble() ?? 1000.0);
-                          
-                      double currentVal = currentPosition.inMilliseconds.toDouble();
-                      if (currentVal > maxVal) currentVal = maxVal;
-
-                      return Slider(
-                        activeColor: const Color(0xFF99F6E4),
-                        inactiveColor: Colors.white10,
-                        min: 0.0,
-                        max: maxVal,
-                        value: currentVal,
-                        onChanged: (double value) {
-                          widget.audioManager.seek(Duration(milliseconds: value.toInt()));
-                        },
-                      );
-                    },
-                  );
-                },
-              ),
+            const Icon(
+              Icons.play_arrow_rounded,
+              size: 18,
+              color: Color(0xFFFFA79A),
             ),
             const SizedBox(width: 6),
-            
-            // Đồng hồ đếm thời gian thực dạng chữ (00:00)
-            ValueListenableBuilder<Duration>(
-              valueListenable: _positionNotifier,
-              builder: (context, currentPosition, _) {
-                final Duration displayDuration = widget.audioManager.isPlaying 
-                    ? currentPosition 
-                    : (widget.secret.duration ?? Duration.zero);
-
-                return Text(
-                  formatSecretDuration(displayDuration),
-                  style: const TextStyle(
-                    color: Color(0xFF99F6E4),
-                    fontSize: 12,
-                    fontFeatures: [FontFeature.tabularFigures()],
-                    fontWeight: FontWeight.w900,
-                  ),
-                );
-              },
+            Expanded(child: _Waveform(active: true)),
+            const SizedBox(width: 10),
+            Text(
+              formatSecretDuration(secret.duration ?? Duration.zero),
+              style: const TextStyle(
+                color: Color(0xFF99F6E4),
+                fontSize: 12,
+                fontFeatures: [FontFeature.tabularFigures()],
+                fontWeight: FontWeight.w900,
+              ),
             ),
           ],
         ),
