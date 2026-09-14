@@ -11,7 +11,7 @@ class LoginMobileScreen extends StatefulWidget {
 }
 
 class _LoginMobileScreenState extends State<LoginMobileScreen> {
-  final _nameController = TextEditingController();
+  final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
 
@@ -20,19 +20,19 @@ class _LoginMobileScreenState extends State<LoginMobileScreen> {
 
   @override
   void dispose() {
-    _nameController.dispose();
+    _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
     super.dispose();
   }
   void _handleSignUp() async {
-  final nickname = _nameController.text.trim();
+  final email = _emailController.text.trim();
   final password = _passwordController.text.trim();
   final confirmPassword = _confirmPasswordController.text.trim();
   
-  if (nickname.isEmpty || password.isEmpty) {
+  if (email.isEmpty || password.isEmpty) {
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Vui lòng điền biệt danh và mật khẩu.')),
+      const SnackBar(content: Text('Vui lòng điền email và mật khẩu.')),
     );
     return;
   }
@@ -56,41 +56,53 @@ class _LoginMobileScreenState extends State<LoginMobileScreen> {
   try {
     // Gọi Service đăng ký
     final authService = AuthService();
-    final userCred = await authService.registerWithNickname(
-      nickname: nickname,
-      password: password,
-    );
+    await authService.registerWithEmail(
+        email: email,
+        password: password,
+      );
 
     if (mounted) {
       Navigator.of(context, rootNavigator: true).pop(); 
     } // Tắt vòng xoay Loading
 
-    if (userCred != null && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Chào mừng bạn đến với Đại dương tĩnh lặng!')),
-      );
-      widget.onAuthenticated(); // Đăng ký xong, kích hoạt chuyển màn hình vào game[cite: 2]
-    }
-  } catch (e) {
-    if (mounted) Navigator.of(context).pop(); // Tắt Loading nếu thất bại
     if (mounted) {
-      String errorMsg = e.toString().replaceAll('Exception: ', '');
-      if (errorMsg == 'DEVICE_LINKED_ANOTHER_OCEAN') {
-        errorMsg = 'Thiết bị đã liên kết với vùng biển khác.';
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            backgroundColor: const Color(0xFF071820),
+            title: const Text('Xác thực tài khoản', style: TextStyle(color: Color(0xFF5EEAD4))),
+            content: Text(
+              'Đã gửi liên kết xác thực đến $email.\nVui lòng mở Gmail (kiểm tra cả hòm thư Spam) và nhấn vào liên kết trước khi đăng nhập.',
+              style: const TextStyle(color: Colors.white70),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(ctx).pop();
+                  setState(() => _isRegister = false);
+                },
+                child: const Text('Đã hiểu', style: TextStyle(color: Color(0xFF5EEAD4))),
+              ),
+            ],
+          ),
+        );
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(errorMsg)),
-      );
+    } catch (e) {
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString().replaceAll('Exception: ', ''))),
+        );
+      }
     }
   }
-}
   void _handleSignIn() async {
-    final nickname = _nameController.text.trim();
+    final email = _emailController.text.trim();
     final password = _passwordController.text.trim();
 
-    if (nickname.isEmpty || password.isEmpty) {
+    if (email.isEmpty || password.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Vui lòng điền biệt danh và mật khẩu.')),
+        const SnackBar(content: Text('Vui lòng điền email và mật khẩu.')),
       );
       return;
     }
@@ -105,8 +117,8 @@ class _LoginMobileScreenState extends State<LoginMobileScreen> {
     try {
       // Gọi Service đăng nhập đã viết trong auth_logic.dart
       final authService = AuthService();
-      final userCred = await authService.signInWithNickname(
-        nickname: nickname,
+      final userCred = await authService.signInWithEmail(
+        email: email,
         password: password,
       );
 
@@ -121,14 +133,119 @@ class _LoginMobileScreenState extends State<LoginMobileScreen> {
         widget.onAuthenticated(); // Đăng nhập thành công, kích hoạt bay vào game
       }
     } catch (e) {
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
       if (mounted) {
-        Navigator.of(context, rootNavigator: true).pop(); // Tắt Loading nếu thất bại
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.toString().replaceAll('Exception: ', ''))),
-        );
+        final errorMsg = e.toString().replaceAll('Exception: ', '');
+        if (errorMsg == 'EMAIL_NOT_VERIFIED') {
+          _showEmailNotVerifiedDialog(email, password);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(errorMsg)),
+          );
+        }
       }
     }
   }
+
+  void _showEmailNotVerifiedDialog(String email, String password) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF071820),
+        title: const Text('Chưa xác thực Email', style: TextStyle(color: Color(0xFFFFA79A))),
+        content: const Text(
+          'Tài khoản này chưa kích hoạt link trong hộp thư Gmail. Bạn có muốn gửi lại email xác thực không?',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Hủy', style: TextStyle(color: Colors.white38)),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.of(ctx).pop();
+              try {
+                await AuthService().resendVerificationEmail(email: email, password: password);
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Đã gửi lại link xác thực! Vui lòng kiểm tra hộp thư.')),
+                  );
+                }
+              } catch (err) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(err.toString())),
+                  );
+                }
+              }
+            },
+            child: const Text('Gửi lại email', style: TextStyle(color: Color(0xFF5EEAD4))),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showForgotPasswordDialog() {
+    final resetEmailController = TextEditingController(text: _emailController.text.trim());
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF071820),
+        title: const Text('Đặt lại mật khẩu', style: TextStyle(color: Color(0xFF5EEAD4))),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Nhập địa chỉ Gmail để nhận đường dẫn đặt lại mật khẩu:',
+              style: TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: resetEmailController,
+              keyboardType: TextInputType.emailAddress,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                hintText: 'vidu@gmail.com',
+                prefixIcon: Icon(Icons.mail_outline, color: Color(0xFF5EEAD4)),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Hủy', style: TextStyle(color: Colors.white38)),
+          ),
+          TextButton(
+            onPressed: () async {
+              final targetEmail = resetEmailController.text.trim();
+              if (targetEmail.isEmpty) return;
+              Navigator.of(ctx).pop();
+              try {
+                await AuthService().sendPasswordResetEmail(email: targetEmail);
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Đã gửi thư đặt lại mật khẩu tới $targetEmail')),
+                  );
+                }
+              } catch (err) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(err.toString().replaceAll('Exception: ', ''))),
+                  );
+                }
+              }
+            },
+            child: const Text('Gửi link', style: TextStyle(color: Color(0xFF5EEAD4))),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -182,11 +299,12 @@ class _LoginMobileScreenState extends State<LoginMobileScreen> {
                         _AuthPanel(
                         isRegister: _isRegister,
                         hidePassword: _hidePassword,
-                        nameController: _nameController,
+                        nameController: _emailController,
                         passwordController: _passwordController,
                         confirmPasswordController: _confirmPasswordController,
                         onToggleMode: () => setState(() => _isRegister = !_isRegister),
                         onTogglePassword: () => setState(() => _hidePassword = !_hidePassword),
+                        onForgotPassword: _showForgotPasswordDialog,
                         onSubmit: _isRegister ? _handleSignUp : _handleSignIn
                       ),
                       ],
@@ -211,6 +329,7 @@ class _AuthPanel extends StatelessWidget {
     required this.confirmPasswordController,
     required this.onToggleMode,
     required this.onTogglePassword,
+    required this.onForgotPassword,
     required this.onSubmit,
   });
 
@@ -221,6 +340,7 @@ class _AuthPanel extends StatelessWidget {
   final TextEditingController confirmPasswordController;
   final VoidCallback onToggleMode;
   final VoidCallback onTogglePassword;
+  final VoidCallback onForgotPassword;
   final VoidCallback onSubmit;
 
   @override
@@ -248,7 +368,7 @@ class _AuthPanel extends StatelessWidget {
           _AuthField(
             controller: nameController,
             icon: Icons.alternate_email,
-            hintText: 'Email hoặc biệt danh',
+            hintText: 'Email',
             keyboardType: TextInputType.emailAddress,
           ),
           const SizedBox(height: 12),
@@ -301,15 +421,26 @@ class _AuthPanel extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: const [
-              _SoftBadge(icon: Icons.favorite_border, label: 'Chỉ thả tim'),
-              _SoftBadge(icon: Icons.mic_none, label: 'Text và audio'),
-              _SoftBadge(icon: Icons.person_off_outlined, label: 'Ẩn danh'),
-            ],
-          ),
+          if (!isRegister) ...[
+            Center(
+              child: TextButton.icon(
+                onPressed: onForgotPassword,
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFF5EEAD4),
+                  padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                ),
+                icon: const Icon(Icons.lock_reset, size: 16),
+                label: const Text(
+                  'Quên mật mã truy cập?',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                    decoration: TextDecoration.underline,
+                  ),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
