@@ -60,41 +60,30 @@ class OceanSecret {
   final double seed;
   int hearts;
   bool isLiked;
+  factory OceanSecret.fromFirestore(Map<String, dynamic> data, String docId, {String? currentUserId}) {
+    final List<dynamic> rawPalette = data['palette'] as List<dynamic>? ?? [0xFF5EEAD4, 0xFFFFA79A];
+    final List<dynamic> likedUsers = data['likedUserIds'] as List<dynamic>? ?? [];
+
+    return OceanSecret(
+      id: docId,
+      senderUid: data['senderUid'] ?? '',
+      body: data['body'] ?? '',
+      kind: data['kind'] == 'audio' ? SecretKind.audio : SecretKind.text,
+      drift: data['drift'] ?? 'Vừa thả xuống dòng sâu',
+      hearts: (data['hearts'] as num?)?.toInt() ?? 0,
+      palette: rawPalette.map((e) => (e as num).toInt()).toList(),
+      seed: (data['seed'] as num?)?.toDouble(),
+      duration: data['durationSeconds'] != null 
+          ? Duration(seconds: (data['durationSeconds'] as num).toInt()) 
+          : null,
+      audioUrl: data['audioUrl'] as String?,
+      isLiked: currentUserId != null && likedUsers.contains(currentUserId),
+    );
+  }
 }
 
 List<OceanSecret> createInitialSecrets() {
   return [
-    OceanSecret(
-      id: '001',
-      senderUid: '001',
-      body: 'Hôm nay mình thấy nhẹ hơn khi viết ra được điều này.',
-      kind: SecretKind.text,
-      drift: 'Vớt được gần đảo nhỏ',
-      hearts: 18,
-      palette: const [0xFF2DD4BF, 0xFFFF8A7A],
-      audioUrl: null, // Chai chữ thuần túy
-    ),
-    OceanSecret(
-      id: '001',
-      senderUid: '001',
-      body: 'Mình không cần ai trả lời, chỉ muốn có một nơi được nói thật.',
-      kind: SecretKind.text,
-      drift: 'Đang trôi ở vùng biển khuya',
-      hearts: 31,
-      palette: const [0xFF60A5FA, 0xFFFBBF24],
-      audioUrl: null,
-    ),
-    OceanSecret(
-      id: '001',
-      senderUid: '001',
-      body: 'Một đoạn audio ẩn danh',
-      kind: SecretKind.audio,
-      drift: 'Sóng mang từ phía đông',
-      duration: const Duration(seconds: 42),
-      hearts: 12,
-      palette: const [0xFFA7F3D0, 0xFFFFB4A8],
-      audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
-    ),
   ];
 }
 

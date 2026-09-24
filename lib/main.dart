@@ -32,7 +32,7 @@ class VoidOceanApp extends StatelessWidget {
 
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Dai duong an danh',
+      title: 'Đại dương tĩnh lặng',
       theme: baseTheme.copyWith(
         scaffoldBackgroundColor: const Color(0xFF06131A),
         colorScheme: const ColorScheme.dark(

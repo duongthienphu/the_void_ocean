@@ -10,6 +10,9 @@ class AppUser {
   final String tier;
   final Timestamp createdAt;
   final Timestamp updatedAt;
+  final int dailyFishedCount;
+  final Timestamp lastFishedDate;
+
 
   AppUser({
     required this.uid,
@@ -19,7 +22,9 @@ class AppUser {
     required this.postsCount,
     required this.tier,
     required this.createdAt,
-    required this.updatedAt
+    required this.updatedAt,
+    required this.dailyFishedCount,
+    required this.lastFishedDate
   });
 
  factory AppUser.fromFirestore(Map<String, dynamic> data, String id) {
@@ -32,6 +37,8 @@ class AppUser {
       tier: data['tier'] ?? 'free',
       createdAt: data['createdAt'] as Timestamp? ?? Timestamp.now(),
       updatedAt: data['updatedAt'] as Timestamp? ?? Timestamp.now(),
+      lastFishedDate: data['lastFishedDate'] as Timestamp? ?? Timestamp.now(),
+      dailyFishedCount: (data['dailyFishedCount'] as num?)?.toInt() ?? 0,
     );
   }
 

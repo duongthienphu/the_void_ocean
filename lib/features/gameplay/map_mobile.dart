@@ -1,19 +1,28 @@
+import 'dart:convert';
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:ocean/core/game_logic.dart';
 import 'package:ocean/core/cloud_secret_service.dart';
 import 'package:ocean/core/audio_secret_manager.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:ocean/models/app_user.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:ocean/core/moderation_dialog.dart';
 
 class OceanMobileScreen extends StatefulWidget {
   const OceanMobileScreen({super.key});
-
   @override
   State<OceanMobileScreen> createState() => _OceanMobileScreenState();
 }
 
 class _OceanMobileScreenState extends State<OceanMobileScreen>
     with SingleTickerProviderStateMixin {
+
+  AppUser? _currentUser;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _userSubscription;
+
   final _textController = TextEditingController();
   final _bubbles = List.generate(24, (_) => _Bubble());
   late final AnimationController _oceanController;
@@ -42,15 +51,28 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
       vsync: this,
       duration: const Duration(seconds: 24),
     )..repeat();
-    _textController.addListener(_refreshDraft);
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      _userSubscription = FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .snapshots()
+          .listen((snapshot) {
+        if (snapshot.exists && snapshot.data() != null && mounted) {
+          setState(() {
+            _currentUser = AppUser.fromFirestore(snapshot.data()!, snapshot.id);
+          });
+        }
+      });
+    }
   }
 
   @override
   void dispose() {
+    _userSubscription?.cancel();
     _recordingTimer?.cancel();
-    _textController
-      ..removeListener(_refreshDraft)
-      ..dispose();
+    _textController.dispose();
     _oceanController.dispose();
     _globalAudioManager.dispose();
     super.dispose();
@@ -60,13 +82,6 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
     if (mounted) {
       setState(() {});
     }
-  }
-
-  bool get _canThrow {
-    if (_draftKind == SecretKind.text) {
-      return _textController.text.trim().isNotEmpty;
-    }
-    return _recordingSeconds > 0;
   }
 
   void _changeDraftKind(SecretKind kind) {
@@ -110,29 +125,157 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
     }
   }
 
-  void _throwSecret() {
-    if (!_canThrow) return;
+  Future<void> _throwSecret() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null || _currentUser == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Vui lòng đăng nhập lại để thả tâm sự.')),
+      );
+      return;
+    }
 
-    final secret = _draftKind == SecretKind.text
-        ? OceanSecret(
-            id: '001',
-            senderUid: '001',
-            body: _textController.text.trim(),
-            kind: SecretKind.text,
-            drift: 'Vừa thả xuống dòng sâu di động',
-            hearts: 0,
-            palette: const [0xFF5EEAD4, 0xFFFFA79A],
-          )
-        : OceanSecret(
-            id: '001',
-            senderUid: '001',
-            body: 'Một đoạn audio ẩn danh mới gieo',
-            kind: SecretKind.audio,
-            drift: 'Vừa trôi khỏi mạn thuyền',
-            duration: Duration(seconds: _recordingSeconds),
-            hearts: 0,
-            palette: const [0xFFFBBF24, 0xFFA7F3D0],
+    // Xử lý riêng nhánh Text
+    if (_draftKind == SecretKind.text) {
+      final textContent = _textController.text.trim();
+      final contentBytes = utf8.encode(textContent).length;
+
+      // Kiểm tra dung lượng kho chứa
+      if (_currentUser!.availableStorageBytes < contentBytes) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Kho chứa đại dương của bạn đã đầy!'),
+            backgroundColor: Color(0xFFEF4444),
+          ),
+        );
+        return;
+      }
+
+      // Hiển thị vòng xoay chờ xử lý
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const Center(
+          child: CircularProgressIndicator(color: Color(0xFF5EEAD4)),
+        ),
+      );
+
+      try {
+        final HttpsCallable callable = FirebaseFunctions.instanceFor(region: 'asia-southeast1')
+            .httpsCallable('moderateContent');
+
+        final result = await callable.call({'text': textContent});
+        final bool isValid = result.data['isValid'] == true;
+        final String category = result.data['category'] ?? 'none';
+        final String reason = result.data['reason'] ?? '';
+
+        // Nếu nội dung vi phạm tiêu chuẩn cộng đồng -> Chặn ngay
+        if (!isValid) {
+          if (mounted) Navigator.of(context).pop(); // Tắt vòng xoay loading
+          if (mounted) {
+            await showModerationAlert(
+              context: context,
+              category: category,
+              reason: reason,
+            );
+          }
+          return; // Dừng lại hoàn toàn, không lưu vào Firestore
+        }
+        final firestore = FirebaseFirestore.instance;
+        final userRef = firestore.collection('users').doc(user.uid);
+        final newSecretRef = firestore.collection('secrets').doc();
+
+        // Transaction đồng thời ghi document mới và cập nhật user
+        await firestore.runTransaction((transaction) async {
+          final userSnapshot = await transaction.get(userRef);
+          if (!userSnapshot.exists) {
+            throw Exception('Không tìm thấy tài khoản cư dân.');
+          }
+
+          final currentAvailable = (userSnapshot.data()?['availableStorageBytes'] as num?)?.toInt() ?? 0;
+          final currentPosts = (userSnapshot.data()?['postsCount'] as num?)?.toInt() ?? 0;
+
+          if (currentAvailable < contentBytes) {
+            throw Exception('Dung lượng không đủ để gieo thêm tâm sự.');
+          }
+
+          // 1. Tạo document mới trong collection 'secrets'
+          transaction.set(newSecretRef, {
+            'id': newSecretRef.id,
+            'senderUid': user.uid,
+            'kind': 'text',
+            'body': textContent,
+            'audioUrl': null,
+            'durationSeconds': 0,
+            'sizeInBytes': contentBytes,
+            'hearts': 0,
+            'likedUserIds': [],
+            'palette': [0xFF5EEAD4, 0xFFFFA79A],
+            'seed': math.Random().nextDouble() * 100,
+            'drift': 'Vừa thả xuống dòng sâu di động',
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+
+          // 2. Trừ dung lượng và tăng postsCount ở document 'users'
+          transaction.update(userRef, {
+            'availableStorageBytes': currentAvailable - contentBytes,
+            'postsCount': currentPosts + 1,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        });
+
+        if (mounted) Navigator.of(context).pop(); // Tắt loading
+
+        // Đưa vào danh sách xem lại tạm thời trên UI và xóa ô nhập
+        final localSecret = OceanSecret(
+          id: newSecretRef.id,
+          senderUid: user.uid,
+          body: textContent,
+          kind: SecretKind.text,
+          drift: 'Vừa thả xuống dòng sâu di động',
+          hearts: 0,
+          palette: const [0xFF5EEAD4, 0xFFFFA79A],
+        );
+
+        setState(() {
+          _secrets.insert(0, localSecret);
+        });
+        _textController.clear();
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Đã thả tâm sự vào đại dương (-$contentBytes bytes).'),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: const Color(0xFF0B2B2C).withValues(alpha: 0.94),
+            ),
           );
+        }
+      } catch (e) {
+        if (mounted) Navigator.of(context).pop(); // Tắt loading nếu lỗi
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(e.toString().replaceAll('Exception: ', '')),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: const Color(0xFFEF4444).withValues(alpha: 0.9),
+            ),
+          );
+        }
+      }
+      return;
+    }
+
+    // Nhánh Audio giữ nguyên logic cũ
+    final secret = OceanSecret(
+      id: '001',
+      senderUid: user.uid,
+      body: 'Một đoạn audio ẩn danh mới gieo',
+      kind: SecretKind.audio,
+      drift: 'Vừa trôi khỏi mạn thuyền',
+      duration: Duration(seconds: _recordingSeconds),
+      hearts: 0,
+      palette: const [0xFFFBBF24, 0xFFA7F3D0],
+    );
 
     _recordingTimer?.cancel();
     _recordingTimer = null;
@@ -142,11 +285,10 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
       _isRecording = false;
       _recordingSeconds = 0;
     });
-    _textController.clear();
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: const Text('Đã thả tâm sự vào đại dương.'),
+        content: const Text('Đã thả audio vào đại dương.'),
         behavior: SnackBarBehavior.floating,
         backgroundColor: const Color(0xFF0B2B2C).withValues(alpha: 0.94),
       ),
@@ -218,21 +360,60 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       resizeToAvoidBottomInset: true,
-      body: _AnimatedOcean(
-        controller: _oceanController,
-        bubbles: _bubbles,
-        child: SafeArea(
-          child: Column(
-            children: [
-              const _MobileTopBar(),
-              Expanded(
-                child: _buildActiveTabContent(),
-              ),
-            ],
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          // 1. Nền biển động chạy 60 FPS được cô lập hoàn toàn ở đây
+          _AnimatedOcean(
+            controller: _oceanController,
+            bubbles: _bubbles,
           ),
-        ),
+
+          // 2. Nội dung UI tĩnh nằm đè lên trên, KHÔNG BỊ BUILD LẠI theo nhịp sóng
+          SafeArea(
+            child: Column(
+              children: [
+                const _MobileTopBar(),
+                Expanded(
+                  child: IndexedStack(
+                    index: _currentTab,
+                    children: [
+                      _OceanHomeTab(
+                        fishedCountToday: _fishedCountToday,
+                        maxFishPerDay: _maxFishPerDay,
+                        currentFishedSecret: _currentFishedSecret,
+                        oceanController: _oceanController,
+                        audioManager: _globalAudioManager,
+                        onFish: _fishRandomSecret,
+                        onToggleHeart: () {
+                          if (_currentFishedSecret != null) {
+                            _toggleHeart(_currentFishedSecret!);
+                          }
+                        },
+                      ),
+                      _OceanGieoTab(
+                        currentUser: _currentUser,
+                        secrets: _secrets,
+                        oceanController: _oceanController,
+                        audioManager: _globalAudioManager,
+                        textController: _textController,
+                        draftKind: _draftKind,
+                        recordingSeconds: _recordingSeconds,
+                        isRecording: _isRecording,
+                        onKindChanged: _changeDraftKind,
+                        onToggleRecording: _toggleRecording,
+                        onThrow: _throwSecret,
+                        onToggleHeart: _toggleHeart,
+                      ),
+                      const _OceanUserTab(),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
-      // Thanh điều hướng dưới đáy màn hình (Bottom Navigation Bar)
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentTab,
         onTap: (index) => setState(() => _currentTab = index),
@@ -261,25 +442,32 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
       ),
     );
   }
+}
 
-  // Phân luồng hiển thị view theo Tab được lựa chọn
-  Widget _buildActiveTabContent() {
-    switch (_currentTab) {
-      case 0:
-        return _buildHomeTab();
-      case 1:
-        return _buildGieoTab();
-      case 2:
-        return _buildUserTab();
-      default:
-        return const SizedBox.shrink();
-    }
-  }
+// =====================================================================
+// TAB 0: HOME / VỚT TÂM SỰ
+// =====================================================================
+class _OceanHomeTab extends StatelessWidget {
+  final int fishedCountToday;
+  final int maxFishPerDay;
+  final OceanSecret? currentFishedSecret;
+  final AnimationController oceanController;
+  final AudioSecretManager audioManager;
+  final VoidCallback onFish;
+  final VoidCallback onToggleHeart;
 
-  /// =========================================================
-  /// TAB 0: HOME PAGE - NƠI VỚT MỖI LẦN 1 TÂM SỰ (TỐI ĐA 15 LẦN)
-  /// =========================================================
-  Widget _buildHomeTab() {
+  const _OceanHomeTab({
+    required this.fishedCountToday,
+    required this.maxFishPerDay,
+    required this.currentFishedSecret,
+    required this.oceanController,
+    required this.audioManager,
+    required this.onFish,
+    required this.onToggleHeart,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Column(
@@ -299,7 +487,7 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
                     const Icon(Icons.bubble_chart_outlined, size: 14, color: Color(0xFF5EEAD4)),
                     const SizedBox(width: 6),
                     Text(
-                      'Hôm nay: $_fishedCountToday/$_maxFishPerDay lần vớt',
+                      'Hôm nay: $fishedCountToday/$maxFishPerDay lần vớt',
                       style: const TextStyle(fontSize: 11, color: Colors.white70, fontWeight: FontWeight.bold),
                     ),
                   ],
@@ -311,7 +499,7 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
           Expanded(
             flex: 4,
             child: Center(
-              child: _currentFishedSecret == null
+              child: currentFishedSecret == null
                   ? Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
@@ -339,11 +527,11 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
                             ),
                           ),
                           _SecretBottleCard(
-                            key: ValueKey(_currentFishedSecret!.id),
-                            secret: _currentFishedSecret!,
-                            controller: _oceanController,
-                            audioManager: _globalAudioManager,
-                            onHeart: () => _toggleHeart(_currentFishedSecret!),
+                            key: ValueKey(currentFishedSecret!.id),
+                            secret: currentFishedSecret!,
+                            controller: oceanController,
+                            audioManager: audioManager,
+                            onHeart: onToggleHeart,
                           ),
                         ],
                       ),
@@ -355,7 +543,7 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
             width: double.infinity,
             height: 50,
             child: ElevatedButton.icon(
-              onPressed: _fishRandomSecret,
+              onPressed: onFish,
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF5EEAD4),
                 foregroundColor: const Color(0xFF06211D),
@@ -370,20 +558,49 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
       ),
     );
   }
+}
 
-  /// =========================================================
-  /// TAB 1: GIEO PAGE - LƯU TẠI TRANG, XEM LẠI & THEO DÕI DUNG LƯỢNG
-  /// =========================================================
-  Widget _buildGieoTab() {
-    // Thông số dung lượng giả lập 20MB tương thích data lõi
-    const double maxStorageBytes = 20971520;
-    const double availableStorageBytes = 16777216; // Giả lập đã dùng 4MB còn 16MB
-    const double usedStorageBytes = maxStorageBytes - availableStorageBytes;
-    final double usagePercent = usedStorageBytes / maxStorageBytes;
+// =====================================================================
+// TAB 1: GIEO TÂM SỰ
+// =====================================================================
+class _OceanGieoTab extends StatelessWidget {
+  final AppUser? currentUser;
+  final List<OceanSecret> secrets;
+  final AnimationController oceanController;
+  final AudioSecretManager audioManager;
+  final TextEditingController textController;
+  final SecretKind draftKind;
+  final int recordingSeconds;
+  final bool isRecording;
+  final ValueChanged<SecretKind> onKindChanged;
+  final VoidCallback onToggleRecording;
+  final VoidCallback onThrow;
+  final void Function(OceanSecret) onToggleHeart;
+
+  const _OceanGieoTab({
+    this.currentUser,
+    required this.secrets,
+    required this.oceanController,
+    required this.audioManager,
+    required this.textController,
+    required this.draftKind,
+    required this.recordingSeconds,
+    required this.isRecording,
+    required this.onKindChanged,
+    required this.onToggleRecording,
+    required this.onThrow,
+    required this.onToggleHeart,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final double maxStorageBytes = (currentUser?.maxStorageBytes ?? 20971520).toDouble();
+    final double availableStorageBytes = (currentUser?.availableStorageBytes ?? 20971520).toDouble();
+    final double usedStorageBytes = (maxStorageBytes - availableStorageBytes).clamp(0.0, maxStorageBytes);
+    final double usagePercent = maxStorageBytes > 0 ? (usedStorageBytes / maxStorageBytes) : 0.0;
 
     return Column(
       children: [
-        // Widget theo dõi dung lượng cho phép của cư dân
         Container(
           width: double.infinity,
           margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
@@ -398,9 +615,12 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
             children: [
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: const [
-                  Text('Kho chứa đại dương', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 12, color: Color(0xFF99F6E4))),
-                  Text('Tối đa: 20 MB', style: TextStyle(color: Colors.white38, fontSize: 11, fontWeight: FontWeight.bold)),
+                children: [
+                  const Text('Kho chứa đại dương', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 12, color: Color(0xFF99F6E4))),
+                  Text(
+                    'Tối đa: ${maxStorageBytes.toInt()} B',
+                    style: const TextStyle(color: Colors.white38, fontSize: 11, fontWeight: FontWeight.bold),
+                  ),
                 ],
               ),
               const SizedBox(height: 8),
@@ -417,57 +637,87 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text('Đã lưu: ${(usedStorageBytes / (1024 * 1024)).toStringAsFixed(2)} MB', style: const TextStyle(color: Colors.white54, fontSize: 11)),
-                  Text('Còn trống: ${(availableStorageBytes / (1024 * 1024)).toStringAsFixed(2)} MB', style: const TextStyle(color: Color(0xFFFFA79A), fontSize: 11, fontWeight: FontWeight.bold)),
+                  Text('Đã lưu: ${usedStorageBytes.toInt()} B', style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                  Text('Còn trống: ${availableStorageBytes.toInt()} B', style: const TextStyle(color: Color(0xFFFFA79A), fontSize: 11, fontWeight: FontWeight.bold)),
                 ],
               ),
             ],
           ),
         ),
-        
-        // Danh sách hiển thị các tâm sự đã gieo để xem lại
         Expanded(
-          child: _secrets.isEmpty
-              ? const Center(child: Text('Đại dương trống rỗng...', style: TextStyle(color: Colors.white38)))
-              : ListView.builder(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                  itemCount: _secrets.length,
-                  itemBuilder: (context, index) {
-                    final secret = _secrets[index];
-                    return _SecretBottleCard(
-                      secret: secret,
-                      controller: _oceanController,
-                      audioManager: _globalAudioManager,
-                      onHeart: () => _toggleHeart(secret),
+          child: currentUser == null
+              ? const Center(child: CircularProgressIndicator(color: Color(0xFF5EEAD4)))
+              : StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                  stream: FirebaseFirestore.instance
+                      .collection('secrets')
+                      .where('senderUid', isEqualTo: currentUser!.uid)
+                      .orderBy('createdAt', descending: true)
+                      .snapshots(),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(
+                        child: CircularProgressIndicator(color: Color(0xFF5EEAD4)),
+                      );
+                    }
+
+                    final docs = snapshot.data?.docs ?? [];
+                    if (docs.isEmpty) {
+                      return const Center(
+                        child: Text(
+                          'Bạn chưa gieo tâm sự nào xuống biển...',
+                          style: TextStyle(color: Colors.white38, fontSize: 13),
+                        ),
+                      );
+                    }
+
+                    return ListView.builder(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      itemCount: docs.length,
+                      itemBuilder: (context, index) {
+                        final secret = OceanSecret.fromFirestore(
+                          docs[index].data(),
+                          docs[index].id,
+                          currentUserId: currentUser!.uid,
+                        );
+
+                        return _SecretBottleCard(
+                          key: ValueKey(secret.id),
+                          secret: secret,
+                          controller: oceanController,
+                          audioManager: audioManager,
+                          onHeart: () => onToggleHeart(secret),
+                        );
+                      },
                     );
                   },
                 ),
         ),
-        
-        // Form nhập liệu gieo tâm sự giữ nguyên cấu hình mobile cũ
         _MobileComposer(
-          draftKind: _draftKind,
-          textController: _textController,
-          recordingSeconds: _recordingSeconds,
-          isRecording: _isRecording,
-          canThrow: _canThrow,
-          onKindChanged: _changeDraftKind,
-          onToggleRecording: _toggleRecording,
-          onThrow: _throwSecret,
+          draftKind: draftKind,
+          textController: textController,
+          recordingSeconds: recordingSeconds,
+          isRecording: isRecording,
+          onKindChanged: onKindChanged,
+          onToggleRecording: onToggleRecording,
+          onThrow: onThrow,
         ),
       ],
     );
   }
+}
 
-  /// =========================================================
-  /// TAB 2: USER PAGE - CÁC TÍNH NĂNG TÀI KHOẢN & DANGER ZONE
-  /// =========================================================
-  Widget _buildUserTab() {
+// =====================================================================
+// TAB 2: CƯ DÂN
+// =====================================================================
+class _OceanUserTab extends StatelessWidget {
+  const _OceanUserTab();
+
+  @override
+  Widget build(BuildContext context) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
-          // 🟩 KHU VỰC CÀI ĐẶT THÔNG THƯỜNG
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
@@ -499,8 +749,6 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
                 const SizedBox(height: 24),
                 const Divider(color: Colors.white10),
                 const SizedBox(height: 8),
-                
-                // Tính năng Đổi Mật Khẩu UI
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.lock_reset, color: Color(0xFF99F6E4)),
@@ -514,8 +762,6 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
                   },
                 ),
                 const Divider(color: Colors.white10),
-                
-                // Tính năng Đổi Thiết Bị Mặc Định UI
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.phonelink_setup_rounded, color: Color(0xFF99F6E4)),
@@ -531,17 +777,14 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
               ],
             ),
           ),
-          
           const SizedBox(height: 20),
-
-          // 🟥 KHU VỰC NGUY HIỂM (DANGER ZONE) - PHONG CÁCH GITHUB
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: const Color(0xFF140D0B).withValues(alpha: 0.6), // Nền hơi đỏ sẫm
+              color: const Color(0xFF140D0B).withValues(alpha: 0.6),
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFFEF4444).withValues(alpha: 0.4), width: 1.2), // Viền cảnh báo đỏ
+              border: Border.all(color: const Color(0xFFEF4444).withValues(alpha: 0.4), width: 1.2),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -562,8 +805,6 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
                   style: TextStyle(color: Colors.white38, fontSize: 11, height: 1.4),
                 ),
                 const SizedBox(height: 16),
-                
-                // Nút Xóa Tài Khoản đã được cách ly vào vùng nguy hiểm
                 SizedBox(
                   width: double.infinity,
                   height: 46,
@@ -588,7 +829,7 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
         ],
       ),
     );
-  } // Dấu ngoặc nhọn thần thánh kết thúc hàm _buildUserTab nằm ở đây nè Phú!
+  }
 }
 
 // ---------------------------------------------------------------------
@@ -666,11 +907,11 @@ class _MobileTopBar extends StatelessWidget {
 
 class _MobileComposer extends StatelessWidget {
   const _MobileComposer({
+    super.key,
     required this.draftKind,
     required this.textController,
     required this.recordingSeconds,
     required this.isRecording,
-    required this.canThrow,
     required this.onKindChanged,
     required this.onToggleRecording,
     required this.onThrow,
@@ -680,7 +921,6 @@ class _MobileComposer extends StatelessWidget {
   final TextEditingController textController;
   final int recordingSeconds;
   final bool isRecording;
-  final bool canThrow;
   final ValueChanged<SecretKind> onKindChanged;
   final VoidCallback onToggleRecording;
   final VoidCallback onThrow;
@@ -723,12 +963,18 @@ class _MobileComposer extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
+          
+          // 1. Ô NHẬP TEXT GIỮ NGUYÊN UI & GIỚI HẠN 5000 KÝ TỰ
           if (draftKind == SecretKind.text)
             TextField(
               controller: textController,
+              maxLength: 5000,
               minLines: 2,
               maxLines: 4,
+              keyboardType: TextInputType.multiline,
               textInputAction: TextInputAction.newline,
+              enableSuggestions: true,
+              autocorrect: false,
               style: const TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.w600,
@@ -737,6 +983,11 @@ class _MobileComposer extends StatelessWidget {
               decoration: const InputDecoration(
                 hintText: 'Viết điều bạn muốn gửi xuống biển...',
                 prefixIcon: Icon(Icons.edit_note, color: Color(0xFF99F6E4)),
+                counterStyle: TextStyle(
+                  color: Colors.white38,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             )
           else
@@ -746,28 +997,44 @@ class _MobileComposer extends StatelessWidget {
               onToggleRecording: onToggleRecording,
             ),
           const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            height: 50,
-            child: FilledButton.icon(
-              onPressed: canThrow ? onThrow : null,
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF5EEAD4),
-                disabledBackgroundColor: Colors.white.withValues(alpha: 0.1),
-                foregroundColor: const Color(0xFF06211D),
-                disabledForegroundColor: Colors.white.withValues(alpha: 0.34),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-              icon: const Icon(Icons.send_rounded, size: 18),
-              label: const Text(
-                'Thả xuống đại dương',
-                style: TextStyle(fontWeight: FontWeight.w900),
-              ),
-            ),
-          ),
+
+          // 2. NÚT BẤM DÙNG ValueListenableBuilder TỰ ĐỘNG BẬT KHI CÓ CHỮ HOẶC CÓ AUDIO
+          if (draftKind == SecretKind.text)
+            ValueListenableBuilder<TextEditingValue>(
+              valueListenable: textController,
+              builder: (context, value, _) {
+                final bool canSubmit = value.text.trim().isNotEmpty;
+                return _buildSubmitButton(canSubmit: canSubmit);
+              },
+            )
+          else
+            _buildSubmitButton(canSubmit: recordingSeconds > 0),
         ],
+      ),
+    );
+  }
+
+  // Hàm dựng giao diện nút bấm dùng chung
+  Widget _buildSubmitButton({required bool canSubmit}) {
+    return SizedBox(
+      width: double.infinity,
+      height: 50,
+      child: FilledButton.icon(
+        onPressed: canSubmit ? onThrow : null,
+        style: FilledButton.styleFrom(
+          backgroundColor: const Color(0xFF5EEAD4),
+          disabledBackgroundColor: Colors.white.withValues(alpha: 0.1),
+          foregroundColor: const Color(0xFF06211D),
+          disabledForegroundColor: Colors.white.withValues(alpha: 0.34),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+        icon: const Icon(Icons.send_rounded, size: 18),
+        label: const Text(
+          'Thả xuống đại dương',
+          style: TextStyle(fontWeight: FontWeight.w900),
+        ),
       ),
     );
   }
@@ -1231,12 +1498,10 @@ class _AnimatedOcean extends StatelessWidget {
   const _AnimatedOcean({
     required this.controller,
     required this.bubbles,
-    required this.child,
   });
 
   final AnimationController controller;
   final List<_Bubble> bubbles;
-  final Widget child;
 
   @override
   Widget build(BuildContext context) {
@@ -1303,7 +1568,6 @@ class _AnimatedOcean extends StatelessWidget {
                       ),
                     ),
                   ),
-                child,
               ],
             );
           },
