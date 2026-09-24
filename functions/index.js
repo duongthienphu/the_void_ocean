@@ -3,7 +3,44 @@ const admin = require("firebase-admin");
 const { GoogleGenAI, Type } = require("@google/genai");
 
 admin.initializeApp();  
-  exports.moderateContent = onCall({ region: "asia-southeast1" }, async (request) => {
+// Danh sách các model nhẹ theo thứ tự ưu tiên
+const PREFERRED_MODELS = [
+  "gemini-3.5-flash",
+  "gemini-flash-lite-latest",
+  "gemini-flash-latest"
+];
+
+    // Hàm tự động phát hiện model nhẹ nhất còn khả dụng
+async function getBestAvailableModel(ai) {
+  try {
+    const available = [];
+    const response = await ai.models.list();
+    for await (const m of response) {
+      if (m.supportedActions?.includes("generateContent")) {
+        available.push(m.name.replace("models/", ""));
+      }
+    }
+
+    // Quét theo thứ tự ưu tiên
+    for (const model of PREFERRED_MODELS) {
+      if (available.includes(model)) {
+        return model;
+      }
+    }
+
+    // Dự phòng an toàn tuyệt đối nếu không khớp cái nào
+    return "gemini-flash-lite-latest";
+  } catch (e) {
+    return "gemini-flash-lite-latest";
+  }
+}
+
+let cachedActiveModel = null;
+
+exports.moderateContent = onCall({ 
+  region: "asia-southeast1",
+  timeoutSeconds: 120,
+}, async (request) => {
   const content = request.data.text;
   if (!content || typeof content !== "string") {
     throw new HttpsError("invalid-argument", "Nội dung cần kiểm duyệt không hợp lệ.");
@@ -12,7 +49,6 @@ admin.initializeApp();
   const now = admin.firestore.Timestamp.now();
   const db = admin.firestore();
 
-  // 1. Lấy tất cả key đang hoạt động và không trong thời gian cooldown
   const keysSnapshot = await db
     .collection("api_keys")
     .where("provider", "==", "gemini")
@@ -23,7 +59,6 @@ admin.initializeApp();
     throw new HttpsError("failed-precondition", "Tất cả cá kiểm duyệt tạm thời bận.");
   }
 
-  // Lọc các key hợp lệ và sắp xếp theo lượt dùng lâu nhất
   const availableDocs = keysSnapshot.docs
     .filter((doc) => {
       const cooldownUntil = doc.data().cooldown_until;
@@ -39,7 +74,7 @@ admin.initializeApp();
     throw new HttpsError("resource-exhausted", "Tất cả cá kiểm duyệt đều đang ngủ nướng.");
   }
 
-    const systemInstruction = `
+const systemInstruction = `
 Bạn là một người kiểm duyệt nội dung tự động cấp cao của mạng xã hội ẩn danh "The Void Ocean".
 Nhiệm vụ: Kiểm duyệt cực kỳ nghiêm ngặt và khắt khe đối với mọi tâm sự được gửi vào đại dương.
 
@@ -66,15 +101,29 @@ NGUYÊN TẮC PHÂN LOẠI:
     const doc = availableDocs[i];
     const docRef = doc.ref;
     const apiKey = doc.data().api_key;
+    let timeoutId = null;
 
     try {
       const ai = new GoogleGenAI({ apiKey: apiKey });
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
+      
+      if (!cachedActiveModel) {
+        cachedActiveModel = await getBestAvailableModel(ai);
+        console.log(`Đã phát hiện và gán model nhẹ nhất: ${cachedActiveModel}`);
+      }
+
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error("GEMINI_KEY_TIMEOUT_12S")), 12000);
+      });
+      
+      const generatePromise = ai.models.generateContent({
+        model: cachedActiveModel,
         contents: content,
         config: {
           systemInstruction: systemInstruction,
           responseMimeType: "application/json",
+          thinkingConfig: {
+            thinkingBudget: 0,
+          },
           responseSchema: {
             type: Type.OBJECT,
             properties: {
@@ -104,6 +153,9 @@ NGUYÊN TẮC PHÂN LOẠI:
         },
       });
 
+      const response = await Promise.race([generatePromise, timeoutPromise]);
+      clearTimeout(timeoutId);
+
       // Cập nhật lại mốc thời gian vừa dùng key
       await docRef.update({
         last_used_at: admin.firestore.FieldValue.serverTimestamp(),
@@ -117,31 +169,47 @@ NGUYÊN TẮC PHÂN LOẠI:
       };
 
     } catch (error) {
-      console.warn(`Key ${doc.id} gặp sự cố:`, error.message || error);
+      if (timeoutId) clearTimeout(timeoutId);
 
-      // Nếu lỗi cạn quota / hết tiền (429, 402 hoặc RESOURCE_EXHAUSTED)
-      const isQuotaError = 
-        error.status === 429 || 
-        error.status === 402 || 
-        (error.message && (error.message.includes("429") || error.message.includes("RESOURCE_EXHAUSTED") || error.message.includes("402")));
+      const errorMessage = error.message || "";
+      const errorCode = error.status || error.code;
 
-      if (isQuotaError) {
-        // Đưa key này vào hàng chờ cooldown (ví dụ: 15 phút)
-        const cooldownTime = new Date(Date.now() + 15 * 60 * 1000);
-        await docRef.update({
-          cooldown_until: admin.firestore.Timestamp.fromDate(cooldownTime),
-        });
+      console.warn(`Key ${doc.id} gặp sự cố:`, errorMessage);
 
-        console.log(`Key ${doc.id} đã bị đưa vào cooldown. Tự động chuyển sang key tiếp theo...`);
-        // Vòng lặp for sẽ tự động chạy sang doc tiếp theo trong danh sách
+      if (errorMessage.includes("TIMEOUT")) {
         continue;
       }
 
-      // Nếu là lỗi cú pháp hay lỗi khác không phải quota, ném ra ngoài
-      throw new HttpsError("internal", "Lỗi xử lý kiểm duyệt nội dung.");
+      // Xóa cache model nếu dính lỗi model không tồn tại hoặc quá tải
+      if (errorMessage.includes("404") || errorMessage.includes("503")) {
+        cachedActiveModel = null;
+      }
+      // Nếu lỗi cạn quota / hết tiền (429, 402 hoặc RESOURCE_EXHAUSTED)
+      const isCooldownRelated =
+        errorCode === 429 ||
+        errorCode === 402 ||
+        errorCode === 503 ||
+        errorMessage.includes("429") ||
+        errorMessage.includes("402") ||
+        errorMessage.includes("503") ||
+        errorMessage.includes("RESOURCE_EXHAUSTED") ||
+        errorMessage.includes("UNAVAILABLE");
+
+      if (isCooldownRelated) {
+        // Đưa key này vào cooldown để các lần gọi sau tạm bỏ qua
+        const cooldownTime = new Date(Date.now() + 1 * 60 * 1000);
+        await docRef.update({
+          cooldown_until: admin.firestore.Timestamp.fromDate(cooldownTime),
+        });
+        console.log(`Key ${doc.id} dính quota/overload, đã set cooldown 1 phút.`);
+      }
+      // Vòng lặp for sẽ tự động chạy sang doc tiếp theo trong danh sách
+      continue;
     }
   }
 
-  // Nếu duyệt qua toàn bộ danh sách key mà cái nào cũng hết hạn mức
+  // Duyệt hết toàn bộ availableDocs mà không cái nào chạy được
   throw new HttpsError("resource-exhausted", "Tất cả các cá kiểm duyệt đều đang kiệt sức mất rồi!!!");
 });
+
+//firebase deploy --only functions:moderateContent

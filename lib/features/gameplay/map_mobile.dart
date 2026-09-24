@@ -42,7 +42,8 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
   Timer? _recordingTimer;
   int _recordingSeconds = 0;
   bool _isRecording = false;
-
+Timer? _cooldownTimer;
+final ValueNotifier<int> _cooldownNotifier = ValueNotifier<int>(0);
   @override
   void initState() {
     super.initState();
@@ -75,7 +76,27 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
     _textController.dispose();
     _oceanController.dispose();
     _globalAudioManager.dispose();
+    _cooldownTimer?.cancel();
+    _cooldownNotifier.dispose();
     super.dispose();
+  }
+
+  void _startCooldown([int seconds = 30]) {
+    _cooldownNotifier.value = seconds;
+
+    _cooldownTimer?.cancel();
+    _cooldownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      if (_cooldownNotifier.value > 1) {
+        _cooldownNotifier.value--;
+      } else {
+        timer.cancel();
+        _cooldownNotifier.value = 0;
+      }
+    });
   }
 
   void _refreshDraft() {
@@ -126,6 +147,7 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
   }
 
   Future<void> _throwSecret() async {
+    if (_cooldownNotifier.value > 0) return;
     final user = FirebaseAuth.instance.currentUser;
     if (user == null || _currentUser == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -149,6 +171,7 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
         );
         return;
       }
+      _startCooldown(30);
 
       // Hiển thị vòng xoay chờ xử lý
       showDialog(
@@ -400,6 +423,7 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
                         draftKind: _draftKind,
                         recordingSeconds: _recordingSeconds,
                         isRecording: _isRecording,
+                        cooldownNotifier: _cooldownNotifier,
                         onKindChanged: _changeDraftKind,
                         onToggleRecording: _toggleRecording,
                         onThrow: _throwSecret,
@@ -576,6 +600,7 @@ class _OceanGieoTab extends StatelessWidget {
   final VoidCallback onToggleRecording;
   final VoidCallback onThrow;
   final void Function(OceanSecret) onToggleHeart;
+final ValueNotifier<int> cooldownNotifier;
 
   const _OceanGieoTab({
     this.currentUser,
@@ -590,6 +615,7 @@ class _OceanGieoTab extends StatelessWidget {
     required this.onToggleRecording,
     required this.onThrow,
     required this.onToggleHeart,
+    required this.cooldownNotifier,
   });
 
   @override
@@ -697,6 +723,7 @@ class _OceanGieoTab extends StatelessWidget {
           textController: textController,
           recordingSeconds: recordingSeconds,
           isRecording: isRecording,
+          cooldownNotifier: cooldownNotifier,
           onKindChanged: onKindChanged,
           onToggleRecording: onToggleRecording,
           onThrow: onThrow,
@@ -915,6 +942,7 @@ class _MobileComposer extends StatelessWidget {
     required this.onKindChanged,
     required this.onToggleRecording,
     required this.onThrow,
+    required this.cooldownNotifier,
   });
 
   final SecretKind draftKind;
@@ -924,6 +952,7 @@ class _MobileComposer extends StatelessWidget {
   final ValueChanged<SecretKind> onKindChanged;
   final VoidCallback onToggleRecording;
   final VoidCallback onThrow;
+  final ValueNotifier<int> cooldownNotifier;
 
   @override
   Widget build(BuildContext context) {
@@ -999,23 +1028,43 @@ class _MobileComposer extends StatelessWidget {
           const SizedBox(height: 12),
 
           // 2. NÚT BẤM DÙNG ValueListenableBuilder TỰ ĐỘNG BẬT KHI CÓ CHỮ HOẶC CÓ AUDIO
-          if (draftKind == SecretKind.text)
-            ValueListenableBuilder<TextEditingValue>(
-              valueListenable: textController,
-              builder: (context, value, _) {
-                final bool canSubmit = value.text.trim().isNotEmpty;
-                return _buildSubmitButton(canSubmit: canSubmit);
-              },
-            )
-          else
-            _buildSubmitButton(canSubmit: recordingSeconds > 0),
+          ValueListenableBuilder<int>(
+            valueListenable: cooldownNotifier,
+            builder: (context, secondsRemaining, _) {
+              final bool isCoolingDown = secondsRemaining > 0;
+
+              if (draftKind == SecretKind.text) {
+                return ValueListenableBuilder<TextEditingValue>(
+                  valueListenable: textController,
+                  builder: (context, value, _) {
+                    final bool hasText = value.text.trim().isNotEmpty;
+                    return _buildSubmitButton(
+                      canSubmit: hasText && !isCoolingDown,
+                      isCoolingDown: isCoolingDown,
+                      secondsRemaining: secondsRemaining,
+                    );
+                  },
+                );
+              } else {
+                return _buildSubmitButton(
+                  canSubmit: recordingSeconds > 0 && !isCoolingDown,
+                  isCoolingDown: isCoolingDown,
+                  secondsRemaining: secondsRemaining,
+                );
+              }
+            },
+          ),
         ],
       ),
     );
   }
 
   // Hàm dựng giao diện nút bấm dùng chung
-  Widget _buildSubmitButton({required bool canSubmit}) {
+  Widget _buildSubmitButton({
+    required bool canSubmit,
+    required bool isCoolingDown,
+    required int secondsRemaining,
+  }) {
     return SizedBox(
       width: double.infinity,
       height: 50,
@@ -1030,10 +1079,15 @@ class _MobileComposer extends StatelessWidget {
             borderRadius: BorderRadius.circular(8),
           ),
         ),
-        icon: const Icon(Icons.send_rounded, size: 18),
-        label: const Text(
-          'Thả xuống đại dương',
-          style: TextStyle(fontWeight: FontWeight.w900),
+        icon: Icon(
+          isCoolingDown ? Icons.hourglass_top_rounded : Icons.send_rounded,
+          size: 18,
+        ),
+        label: Text(
+          isCoolingDown
+              ? 'Cá kiểm duyệt đang nghỉ ngơi, còn (${secondsRemaining}s)...'
+              : 'Thả xuống đại dương',
+          style: const TextStyle(fontWeight: FontWeight.w900),
         ),
       ),
     );
