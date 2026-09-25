@@ -2,6 +2,15 @@ import 'dart:math' as math;
 
 enum SecretKind { text, audio }
 
+const List<List<int>> oceanPalettePool = [
+  [0xFF5EEAD4, 0xFFFFA79A], // Ngọc bích & San hô ấm
+  [0xFF2DD4BF, 0xFF38BDF8], // Sóng biếc & Bầu trời
+  [0xFFA78BFA, 0xFFF472B6], // Hoàng hôn tím & Hồng mộng mơ
+  [0xFFFBBF24, 0xFFFB7185], // Ánh trăng vàng & San hô đỏ
+  [0xFF34D399, 0xFF60A5FA], // Tảo biển & Hải lưu sâu
+  [0xFF818CF8, 0xFFC084FC], // Đêm cực quang
+];
+
 const List<String> oceanDriftPool = [
   // Chủ đề: Địa danh, hòn đảo (Giống câu mẫu của bạn)
   'Vớt được gần đảo nhỏ',
@@ -33,6 +42,17 @@ const List<String> oceanDriftPool = [
   'Vừa thoát khỏi một xoáy nước nhỏ',
   'Lấp ló sau những ngọn sóng bạc đầu',
 ];
+
+String getRandomDrift() {
+  final random = math.Random();
+  return oceanDriftPool[random.nextInt(oceanDriftPool.length)];
+}
+
+// Hàm bốc ngẫu nhiên một bộ màu từ oceanPalettePool
+List<int> getRandomPalette() {
+  final random = math.Random();
+  return oceanPalettePool[random.nextInt(oceanPalettePool.length)];
+}
 
 class OceanSecret {
   OceanSecret({

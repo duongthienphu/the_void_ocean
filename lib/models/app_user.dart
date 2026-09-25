@@ -146,3 +146,73 @@ extension UserTierStyling on UserTier {
     }
   }
 }
+
+class HologramText extends StatefulWidget {
+  final String text;
+  final TextStyle? style;
+  final Duration duration;
+  final UserTier tier;
+
+  const HologramText(
+    this.text, {
+    super.key,
+    this.style,
+    this.duration = const Duration(seconds: 4),
+    this.tier = UserTier.exclusive,
+  });
+
+  @override
+  State<HologramText> createState() => _HologramTextState();
+}
+
+class _HologramTextState extends State<HologramText>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: widget.duration,
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = widget.tier.gradientColors;
+
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return ShaderMask(
+          blendMode: BlendMode.srcIn,
+          shaderCallback: (bounds) {
+            final double shift = _controller.value * 2;
+            return LinearGradient(
+              begin: Alignment(-1.0 + shift, 0.0),
+              end: Alignment(1.0 + shift, 0.0),
+              colors: colors,
+              tileMode: TileMode.repeated,
+            ).createShader(bounds);
+          },
+          child: child,
+        );
+      },
+      child: Text(
+        widget.text,
+        style: (widget.style ?? const TextStyle()).copyWith(
+          fontSize: widget.style?.fontSize ?? 11.5,
+          fontWeight: widget.style?.fontWeight ?? FontWeight.w900,
+          letterSpacing: widget.style?.letterSpacing ?? 0.3,
+        ),
+      ),
+    );
+  }
+}

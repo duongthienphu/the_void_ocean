@@ -115,12 +115,6 @@ final ValueNotifier<int> _cooldownNotifier = ValueNotifier<int>(0);
     });
   }
 
-  void _refreshDraft() {
-    if (mounted) {
-      setState(() {});
-    }
-  }
-
   void _changeDraftKind(SecretKind kind) {
     if (kind == SecretKind.text) {
       _recordingTimer?.cancel();
@@ -442,7 +436,7 @@ final ValueNotifier<int> _cooldownNotifier = ValueNotifier<int>(0);
                         onThrow: _throwSecret,
                         onToggleHeart: _toggleHeart,
                       ),
-                      const _OceanUserTab(),
+                      _OceanUserTab(currentUser: _currentUser),
                     ],
                   ),
                 ),
@@ -749,121 +743,462 @@ final ValueNotifier<int> cooldownNotifier;
 }
 
 // =====================================================================
-// TAB 2: CƯ DÂN
+// TAB 2: CƯ DÂN 
 // =====================================================================
 class _OceanUserTab extends StatelessWidget {
-  const _OceanUserTab();
+  final AppUser? currentUser;
+
+  const _OceanUserTab({this.currentUser});
+
+  // 1. Đổi mật khẩu qua Gmail
+  void _handleResetPassword(BuildContext context, String? email) {
+    if (email == null || email.isEmpty) {
+      showOceanSnackBar(context, 'Không tìm thấy địa chỉ email của bạn.', isError: true);
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF071820),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        title: const Text('Đổi mật mã truy cập', style: TextStyle(color: Color(0xFF5EEAD4), fontWeight: FontWeight.bold)),
+        content: Text(
+          'Nhân viên cá sẽ gửi liên kết đặt lại mật khẩu đến:\n$email\n\nBạn có muốn tiếp tục?',
+          style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Hủy', style: TextStyle(color: Colors.white38)),
+          ),
+          FilledButton(
+            onPressed: () async {
+              Navigator.of(ctx).pop();
+              try {
+                await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+                if (context.mounted) {
+                  showOceanSnackBar(context, 'Đã gửi thư đặt lại mật khẩu tới $email');
+                }
+              } catch (e) {
+                if (context.mounted) {
+                  showOceanSnackBar(context, e.toString().replaceAll('Exception: ', ''), isError: true);
+                }
+              }
+            },
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF5EEAD4),
+              foregroundColor: const Color(0xFF06211D),
+            ),
+            child: const Text('Gửi liên kết', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 2. Đổi Email (Cần xác thực mật khẩu hiện tại)
+  void _handleChangeEmail(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    final newEmailController = TextEditingController();
+    final passwordController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF071820),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        title: const Text('Thay đổi Email cư dân', style: TextStyle(color: Color(0xFF5EEAD4), fontWeight: FontWeight.bold)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Nhập email mới và mật khẩu hiện tại để xác nhận đổi thông tin:',
+              style: TextStyle(color: Colors.white70, fontSize: 12.5),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: newEmailController,
+              keyboardType: TextInputType.emailAddress,
+              style: const TextStyle(color: Colors.white, fontSize: 13),
+              decoration: const InputDecoration(
+                hintText: 'Email mới',
+                prefixIcon: Icon(Icons.mail_outline, color: Color(0xFF5EEAD4), size: 20),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: passwordController,
+              obscureText: true,
+              style: const TextStyle(color: Colors.white, fontSize: 13),
+              decoration: const InputDecoration(
+                hintText: 'Mật khẩu hiện tại',
+                prefixIcon: Icon(Icons.lock_outline, color: Color(0xFF5EEAD4), size: 20),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Hủy', style: TextStyle(color: Colors.white38)),
+          ),
+          FilledButton(
+            onPressed: () async {
+              final newEmail = newEmailController.text.trim();
+              final password = passwordController.text.trim();
+
+              if (newEmail.isEmpty || password.isEmpty) {
+                showOceanSnackBar(context, 'Vui lòng điền đủ email mới và mật khẩu.', isError: true);
+                return;
+              }
+
+              Navigator.of(ctx).pop();
+
+              try {
+                // Re-authenticate
+                final cred = EmailAuthProvider.credential(email: user.email!, password: password);
+                await user.reauthenticateWithCredential(cred);
+
+                // Gửi xác thực đổi email
+                await user.verifyBeforeUpdateEmail(newEmail);
+
+                // Cập nhật trường email trong document users
+                await FirebaseFirestore.instance.collection('users').doc(user.uid).update({
+                  'email': newEmail,
+                  'updatedAt': FieldValue.serverTimestamp(),
+                });
+
+                if (context.mounted) {
+                  showOceanSnackBar(context, 'Nhân viên cá đã gửi liên kết xác nhận tới $newEmail. Vui lòng kiểm tra hộp thư.');
+                }
+              } catch (e) {
+                if (context.mounted) {
+                  showOceanSnackBar(context, e.toString().replaceAll('Exception: ', ''), isError: true);
+                }
+              }
+            },
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF5EEAD4),
+              foregroundColor: const Color(0xFF06211D),
+            ),
+            child: const Text('Cập nhật', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 3. Đăng xuất
+  void _handleSignOut(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF071820),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        title: const Text('Rời khỏi đại dương?', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        content: const Text(
+          'Bạn sẽ cần đăng nhập lại vào lần truy cập tiếp theo.',
+          style: TextStyle(color: Colors.white70, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Ở lại', style: TextStyle(color: Colors.white38)),
+          ),
+          FilledButton(
+            onPressed: () async {
+              Navigator.of(ctx).pop();
+              await FirebaseAuth.instance.signOut();
+            },
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFFFA79A),
+              foregroundColor: const Color(0xFF2B0B08),
+            ),
+            child: const Text('Đăng xuất', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 4. Xóa vĩnh viễn tài khoản (Xác thực mật khẩu + Xóa Firestore + Xóa Auth)
+  void _handleDeleteAccount(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    final passwordController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF160A08),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: const BorderSide(color: Color(0xFFEF4444), width: 1),
+        ),
+        title: const Text('Xác nhận xóa tài khoản', style: TextStyle(color: Color(0xFFEF4444), fontWeight: FontWeight.bold)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Hành động này sẽ xóa vĩnh viễn tài khoản, dữ liệu kho chứa và nhấn chìm toàn bộ tâm sự của bạn xuống đáy biển sâu không thể khôi phục.',
+              style: TextStyle(color: Colors.white70, fontSize: 12.5, height: 1.4),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: passwordController,
+              obscureText: true,
+              style: const TextStyle(color: Colors.white, fontSize: 13),
+              decoration: const InputDecoration(
+                hintText: 'Nhập mật khẩu hiện tại để xóa',
+                prefixIcon: Icon(Icons.key, color: Color(0xFFFFA79A), size: 20),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Hủy bỏ', style: TextStyle(color: Colors.white54)),
+          ),
+          FilledButton(
+            onPressed: () async {
+              final password = passwordController.text.trim();
+              if (password.isEmpty) {
+                showOceanSnackBar(context, 'Vui lòng nhập mật khẩu xác nhận.', isError: true);
+                return;
+              }
+
+              Navigator.of(ctx).pop();
+
+              try {
+                // Bước 1: Re-authenticate
+                final cred = EmailAuthProvider.credential(email: user.email!, password: password);
+                await user.reauthenticateWithCredential(cred);
+                final firestore = FirebaseFirestore.instance;
+
+                // Bước 2: Dọn dẹp bài viết
+                final secretsSnapshot = await firestore
+                    .collection('secrets')
+                    .where('senderUid', isEqualTo: user.uid)
+                    .get();
+                final batch = firestore.batch();
+                for (final doc in secretsSnapshot.docs) {
+                  batch.delete(doc.reference);
+                }
+
+                // Bước 3: Dọn dẹp tài liệu user trên Firestore
+                await firestore.collection('users').doc(user.uid).delete();
+
+                // Bước 4: Xóa vĩnh viễn user khỏi Firebase Auth
+                await user.delete();
+
+                if (context.mounted) {
+                  showOceanSnackBar(context, 'Tài khoản của bạn đã được xóa hoàn toàn. Chúc bạn luôn hạnh phúc!');
+                }
+              } catch (e) {
+                if (context.mounted) {
+                  showOceanSnackBar(context, e.toString().replaceAll('Exception: ', ''), isError: true);
+                }
+              }
+            },
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFEF4444),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Xóa vĩnh viễn', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser;
+    final String userEmail = user?.email ?? 'Chưa xác thực email';
+    final int postsCount = currentUser?.postsCount ?? 0;
+    final double maxBytes = (currentUser?.maxStorageBytes ?? 20971520).toDouble();
+    final double availableBytes = (currentUser?.availableStorageBytes ?? 20971520).toDouble();
+    final double usedKB = ((maxBytes - availableBytes) / 1024).clamp(0.0, maxBytes / 1024);
+
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Thẻ hồ sơ
           Container(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
-              color: const Color(0xFF071820).withValues(alpha: 0.8),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.white10),
+              color: const Color(0xFF071820).withValues(alpha: 0.85),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.3),
+                  blurRadius: 20,
+                  offset: const Offset(0, 8),
+                ),
+              ],
             ),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   children: [
-                    CircleAvatar(
-                      radius: 24,
-                      backgroundColor: const Color(0xFF5EEAD4).withValues(alpha: 0.14),
-                      child: const Icon(Icons.person, color: Color(0xFF5EEAD4)),
+                    Container(
+                      width: 52,
+                      height: 52,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF5EEAD4).withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFF5EEAD4).withValues(alpha: 0.3)),
+                      ),
+                      child: const Icon(Icons.person_pin_circle_rounded, color: Color(0xFF5EEAD4), size: 30),
                     ),
                     const SizedBox(width: 14),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: const [
-                        Text('Cư dân ẩn danh', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
-                        SizedBox(height: 2),
-                        Text('Tài khoản bảo mật 2 lớp', style: TextStyle(color: Colors.white38, fontSize: 12)),
-                      ],
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Cư dân ẩn danh', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900, color: Colors.white)),
+                          const SizedBox(height: 3),
+                          Text(
+                            userEmail,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(color: Colors.white60, fontSize: 12, fontWeight: FontWeight.w600),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 24),
-                const Divider(color: Colors.white10),
-                const SizedBox(height: 8),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.lock_reset, color: Color(0xFF99F6E4)),
-                  title: const Text('Thay đổi mã mật đạo', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                  subtitle: const Text('Thiết lập lại mật khẩu tài khoản', style: TextStyle(fontSize: 12)),
-                  trailing: const Icon(Icons.chevron_right, size: 20, color: Colors.white38),
-                  onTap: () {
-                    showOceanSnackBar(context, '[UI] Mở trang đổi mật khẩu.');
-                  },
+                const SizedBox(height: 18),
+                Container(
+                  padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.04),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      _buildMiniStat('Tâm sự đã gieo', '$postsCount bài', const Color(0xFF5EEAD4)),
+                      Container(width: 1, height: 26, color: Colors.white12),
+                      _buildMiniStat('Dung lượng dùng', '${usedKB.toStringAsFixed(1)} KB', const Color(0xFFFFA79A)),
+                    ],
+                  ),
                 ),
-                const Divider(color: Colors.white10),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+
+          // Tài khoản & Bảo mật
+          const Padding(
+            padding: EdgeInsets.only(left: 4, bottom: 8),
+            child: Text(
+              'TÀI KHOẢN VÀ BẢO MẬT',
+              style: TextStyle(color: Color(0xFF99F6E4), fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 0.8),
+            ),
+          ),
+          Container(
+            decoration: BoxDecoration(
+              color: const Color(0xFF071820).withValues(alpha: 0.85),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+            ),
+            child: Column(
+              children: [
                 ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.phonelink_setup_rounded, color: Color(0xFF99F6E4)),
-                  title: const Text('Thay đổi thiết bị mặc định', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                  subtitle: const Text('Đồng bộ định danh thiết bị này làm gốc', style: TextStyle(fontSize: 12)),
+                  leading: const Icon(Icons.lock_reset_rounded, color: Color(0xFF5EEAD4), size: 22),
+                  title: const Text('Thay đổi mật khẩu', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+                  subtitle: const Text('Gửi email đặt lại mã khóa bí mật', style: TextStyle(color: Colors.white38, fontSize: 12)),
                   trailing: const Icon(Icons.chevron_right, size: 20, color: Colors.white38),
-                  onTap: () {
-                    showOceanSnackBar(context, '[UI] Bật popup xác nhận đồng bộ mã Device ID mới.');
-                  },
+                  onTap: () => _handleResetPassword(context, user?.email),
+                ),
+                const Divider(height: 1, color: Colors.white10),
+                ListTile(
+                  leading: const Icon(Icons.mark_email_read_outlined, color: Color(0xFF5EEAD4), size: 22),
+                  title: const Text('Thay đổi email', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+                  subtitle: const Text('Cập nhật hòm thư liên lạc mới', style: TextStyle(color: Colors.white38, fontSize: 12)),
+                  trailing: const Icon(Icons.chevron_right, size: 20, color: Colors.white38),
+                  onTap: () => _handleChangeEmail(context),
+                ),
+                const Divider(height: 1, color: Colors.white10),
+                ListTile(
+                  leading: const Icon(Icons.logout_rounded, color: Color(0xFFFFA79A), size: 22),
+                  title: const Text('Đăng xuất tài khoản', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFFFFA79A))),
+                  subtitle: const Text('Tạm ngưng kết nối với làn sóng biển', style: TextStyle(color: Colors.white38, fontSize: 12)),
+                  trailing: const Icon(Icons.chevron_right, size: 20, color: Colors.white38),
+                  onTap: () => _handleSignOut(context),
                 ),
               ],
             ),
           ),
           const SizedBox(height: 20),
+
+          // Khu vực nguy hiểm
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: const Color(0xFF140D0B).withValues(alpha: 0.6),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFFEF4444).withValues(alpha: 0.4), width: 1.2),
+              color: const Color(0xFF160A08).withValues(alpha: 0.7),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFEF4444).withValues(alpha: 0.35), width: 1.2),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   children: const [
-                    Icon(Icons.dangerous_outlined, color: Color(0xFFEF4444), size: 18),
+                    Icon(Icons.warning_amber_rounded, color: Color(0xFFEF4444), size: 20),
                     SizedBox(width: 8),
-                    Text(
-                      'Khu vực nguy hiểm (Danger Zone)',
-                      style: TextStyle(color: Color(0xFFEF4444), fontWeight: FontWeight.w900, fontSize: 13, letterSpacing: 0.5),
-                    ),
+                    Text('Khu vực nguy hiểm', style: TextStyle(color: Color(0xFFEF4444), fontWeight: FontWeight.w900, fontSize: 13)),
                   ],
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 8),
                 const Text(
-                  'Những hành động dưới đây sẽ xóa vĩnh viễn dữ liệu và không thể khôi phục lại. Cẩn trọng tránh bấm nhầm.',
-                  style: TextStyle(color: Colors.white38, fontSize: 11, height: 1.4),
+                  'Khi xóa tài khoản, tất cả tâm sự trôi dạt và dung lượng kho chứa sẽ bị nhấn chìm vĩnh viễn dưới đáy biển.',
+                  style: TextStyle(color: Colors.white54, fontSize: 11.5, height: 1.4),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 14),
                 SizedBox(
                   width: double.infinity,
-                  height: 46,
+                  height: 44,
                   child: OutlinedButton.icon(
-                    onPressed: () {
-                      showOceanSnackBar(context, '[UI] Bật popup xác nhận xóa tài khoản vĩnh viễn.', isError: true);
-                    },
+                    onPressed: () => _handleDeleteAccount(context),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: const Color(0xFFFFA79A),
                       side: const BorderSide(color: Color(0xFFEF4444), width: 0.8),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
                     ),
                     icon: const Icon(Icons.delete_forever_outlined, size: 18),
-                    label: const Text('Xóa vĩnh viễn tài khoản cư dân', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+                    label: const Text('Xóa tài khoản vĩnh viễn', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12.5)),
                   ),
                 ),
               ],
             ),
           ),
+          const SizedBox(height: 24),
         ],
       ),
+    );
+  }
+
+  static Widget _buildMiniStat(String label, String value, Color color) {
+    return Column(
+      children: [
+        Text(value, style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.w900)),
+        const SizedBox(height: 3),
+        Text(label, style: const TextStyle(color: Colors.white38, fontSize: 11, fontWeight: FontWeight.w600)),
+      ],
     );
   }
 }
@@ -877,8 +1212,23 @@ class _MobileTopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF071820).withValues(alpha: 0.92), // Nền xanh đen nổi bật
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.08),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.35),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
       child: Row(
         children: [
           Container(
@@ -923,18 +1273,7 @@ class _MobileTopBar extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 10),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: const Icon(
-              Icons.person_off_outlined,
-              size: 18,
-              color: Color(0xFFFFA79A),
-            ),
-          ),
+          const HologramText('Made by Duong Thien Phu'),
         ],
       ),
     );
