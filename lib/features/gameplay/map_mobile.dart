@@ -230,6 +230,8 @@ final ValueNotifier<int> _cooldownNotifier = ValueNotifier<int>(0);
             throw Exception('Dung lượng không đủ để gieo thêm tâm sự.');
           }
 
+          final randomDrift = getRandomDrift();
+          final randomPalette = getRandomPalette();
           // 1. Tạo document mới trong collection 'secrets'
           transaction.set(newSecretRef, {
             'id': newSecretRef.id,
@@ -241,9 +243,9 @@ final ValueNotifier<int> _cooldownNotifier = ValueNotifier<int>(0);
             'sizeInBytes': contentBytes,
             'hearts': 0,
             'likedUserIds': [],
-            'palette': [0xFF5EEAD4, 0xFFFFA79A],
+            'palette': randomPalette,
             'seed': math.Random().nextDouble() * 100,
-            'drift': 'Vừa thả xuống dòng sâu di động',
+            'drift': randomDrift,
             'createdAt': FieldValue.serverTimestamp(),
           });
 
