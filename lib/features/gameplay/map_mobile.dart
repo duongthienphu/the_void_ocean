@@ -10,6 +10,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:ocean/models/app_user.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:ocean/core/moderation_dialog.dart';
+import 'package:ocean/core/ocean_snackbar.dart';
 
 class OceanMobileScreen extends StatefulWidget {
   const OceanMobileScreen({super.key});
@@ -91,6 +92,11 @@ final ValueNotifier<int> _cooldownNotifier = ValueNotifier<int>(0);
     super.dispose();
   }
 
+  void _showOceanSnackBar(String message, {bool isError = false}) {
+    if (!mounted) return;
+  showOceanSnackBar(context, message, isError: isError);
+}
+
   void _startCooldown([int seconds = 30]) {
     _cooldownNotifier.value = seconds;
 
@@ -160,9 +166,7 @@ final ValueNotifier<int> _cooldownNotifier = ValueNotifier<int>(0);
     if (_cooldownNotifier.value > 0) return;
     final user = FirebaseAuth.instance.currentUser;
     if (user == null || _currentUser == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Vui lòng đăng nhập lại để thả tâm sự.')),
-      );
+      _showOceanSnackBar('Vui lòng đăng nhập lại để thả tâm sự.', isError: true);
       return;
     }
 
@@ -173,12 +177,7 @@ final ValueNotifier<int> _cooldownNotifier = ValueNotifier<int>(0);
 
       // Kiểm tra dung lượng kho chứa
       if (_currentUser!.availableStorageBytes < contentBytes) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Kho chứa đại dương của bạn đã đầy!'),
-            backgroundColor: Color(0xFFEF4444),
-          ),
-        );
+        _showOceanSnackBar('Kho chứa đại dương của bạn đã đầy!', isError: true);
         return;
       }
       _startCooldown(30);
@@ -275,25 +274,14 @@ final ValueNotifier<int> _cooldownNotifier = ValueNotifier<int>(0);
         _textController.clear();
 
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Đã thả tâm sự vào đại dương (-$contentBytes bytes).'),
-              behavior: SnackBarBehavior.floating,
-              backgroundColor: const Color(0xFF0B2B2C).withValues(alpha: 0.94),
-            ),
-          );
+          _showOceanSnackBar('Đã thả tâm sự vào đại dương (-$contentBytes bytes).');
         }
       } catch (e) {
-        if (mounted) Navigator.of(context).pop(); // Tắt loading nếu lỗi
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(e.toString().replaceAll('Exception: ', '')),
-              behavior: SnackBarBehavior.floating,
-              backgroundColor: const Color(0xFFEF4444).withValues(alpha: 0.9),
-            ),
-          );
-        }
+        if (mounted) Navigator.of(context).pop();
+        _showOceanSnackBar(
+          e.toString().replaceAll('Exception: ', ''),
+          isError: true,
+        );
       }
       return;
     }
@@ -318,14 +306,7 @@ final ValueNotifier<int> _cooldownNotifier = ValueNotifier<int>(0);
       _isRecording = false;
       _recordingSeconds = 0;
     });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('Đã thả audio vào đại dương.'),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: const Color(0xFF0B2B2C).withValues(alpha: 0.94),
-      ),
-    );
+    _showOceanSnackBar('Đã thả audio vào đại dương.');
   }
 
   void _toggleHeart(OceanSecret secret) {
@@ -340,9 +321,7 @@ final ValueNotifier<int> _cooldownNotifier = ValueNotifier<int>(0);
     await _globalAudioManager.disposePlayer();
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Vui lòng đăng nhập để vớt tâm sự.')),
-      );
+      _showOceanSnackBar('Vui lòng đăng nhập để vớt tâm sự.', isError: true);
       return;
     }
 
@@ -368,12 +347,7 @@ final ValueNotifier<int> _cooldownNotifier = ValueNotifier<int>(0);
       // 4. Xử lý kết quả trả về để đưa ra giao diện công khai
       if (fishedSecret == null) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Đại dương hôm nay lặng sóng, không vớt được chai nào của người lạ rồi!'),
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
+          _showOceanSnackBar('Đại dương hôm nay lặng sóng, không vớt được chai nào của người lạ rồi!');
         }
       } else {
         // Vớt thành công -> Cập nhật Object vào UI để widget _SecretBottleCard tự động vẽ
@@ -384,17 +358,10 @@ final ValueNotifier<int> _cooldownNotifier = ValueNotifier<int>(0);
     } catch (e) {
       // Tắt Loading nếu lỡ xảy ra lỗi hệ thống hoặc chạm ngưỡng 15 lượt
       if (mounted) Navigator.of(context).pop();
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            // Hiển thị nguyên văn chuỗi lỗi "Đã vớt đủ 15 thông điệp" bắn từ Firestore ra ngoài
-            content: Text(e.toString().replaceAll('Exception: ', '')),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: const Color(0xFFEF4444).withValues(alpha: 0.9),
-          ),
-        );
-      }
+      _showOceanSnackBar(
+        e.toString().replaceAll('Exception: ', ''),
+        isError: true,
+      );
     }
   }
   @override
@@ -804,9 +771,7 @@ class _OceanUserTab extends StatelessWidget {
                   subtitle: const Text('Thiết lập lại mật khẩu tài khoản', style: TextStyle(fontSize: 12)),
                   trailing: const Icon(Icons.chevron_right, size: 20, color: Colors.white38),
                   onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('[UI] Mở trang đổi mật khẩu.')),
-                    );
+                    showOceanSnackBar(context, '[UI] Mở trang đổi mật khẩu.');
                   },
                 ),
                 const Divider(color: Colors.white10),
@@ -817,9 +782,7 @@ class _OceanUserTab extends StatelessWidget {
                   subtitle: const Text('Đồng bộ định danh thiết bị này làm gốc', style: TextStyle(fontSize: 12)),
                   trailing: const Icon(Icons.chevron_right, size: 20, color: Colors.white38),
                   onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('[UI] Bật popup xác nhận đồng bộ mã Device ID mới.')),
-                    );
+                    showOceanSnackBar(context, '[UI] Bật popup xác nhận đồng bộ mã Device ID mới.');
                   },
                 ),
               ],
@@ -858,9 +821,7 @@ class _OceanUserTab extends StatelessWidget {
                   height: 46,
                   child: OutlinedButton.icon(
                     onPressed: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('[UI] Bật popup xác nhận xóa tài khoản vĩnh viễn.')),
-                      );
+                      showOceanSnackBar(context, '[UI] Bật popup xác nhận xóa tài khoản vĩnh viễn.', isError: true);
                     },
                     style: OutlinedButton.styleFrom(
                       foregroundColor: const Color(0xFFFFA79A),
