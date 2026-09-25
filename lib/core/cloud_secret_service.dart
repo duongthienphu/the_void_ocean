@@ -1,7 +1,6 @@
  import 'dart:math' as math;
   import 'package:cloud_firestore/cloud_firestore.dart';
   import 'game_logic.dart';
-  import 'package:ocean/core/ocean_snackbar.dart';
 
 class CloudSecretService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -75,6 +74,7 @@ class CloudSecretService {
         kind: data['kind'] == 'audio' ? SecretKind.audio : SecretKind.text,
         drift: data['drift'] ?? 'Trôi vô định',
         hearts: (data['hearts'] as num?)?.toInt() ?? 0,
+        isLiked: (data['likedUserIds'] as List<dynamic>?)?.contains(currentUserId) ?? false,
         palette: parsedPalette.isNotEmpty ? parsedPalette : const [0xFF60A5FA, 0xFFFBBF24],
         audioUrl: data['audioUrl'] as String?,
         duration: data['durationSeconds'] != null 
@@ -85,5 +85,18 @@ class CloudSecretService {
     } catch (e) {
       rethrow;
     }
+  }
+  Future<void> toggleSecretLike({
+    required String secretId,
+    required String userId,
+    required bool isLiked,
+  }) async {
+    final secretRef = _firestore.collection('secrets').doc(secretId);
+    await secretRef.update({
+      'hearts': FieldValue.increment(isLiked ? 1 : -1),
+      'likedUserIds': isLiked
+          ? FieldValue.arrayUnion([userId])
+          : FieldValue.arrayRemove([userId]),
+    });
   }
 }

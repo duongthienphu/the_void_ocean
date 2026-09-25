@@ -309,11 +309,36 @@ final ValueNotifier<int> _cooldownNotifier = ValueNotifier<int>(0);
     _showOceanSnackBar('Đã thả audio vào đại dương.');
   }
 
-  void _toggleHeart(OceanSecret secret) {
+  Future<void> _toggleHeart(OceanSecret secret) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      _showOceanSnackBar('Vui lòng đăng nhập để gửi tim.', isError: true);
+      return;
+    }
+
+    // 1. Cập nhật UI ngay lập tức
     setState(() {
       secret.isLiked = !secret.isLiked;
       secret.hearts += secret.isLiked ? 1 : -1;
     });
+
+    // 2. Đồng bộ Firestore chạy nền
+    try {
+      await _cloudSecretService.toggleSecretLike(
+        secretId: secret.id,
+        userId: user.uid,
+        isLiked: secret.isLiked,
+      );
+    } catch (_) {
+      // Revert lại nếu có lỗi mạng
+      if (mounted) {
+        setState(() {
+          secret.isLiked = !secret.isLiked;
+          secret.hearts += secret.isLiked ? 1 : -1;
+        });
+        _showOceanSnackBar('Không thể gửi tim, vui lòng thử lại.', isError: true);
+      }
+    }
   }
 
   // Logic UI xử lý vớt ngẫu nhiên 1 tâm sự (Tối đa 15 lần/ngày)
