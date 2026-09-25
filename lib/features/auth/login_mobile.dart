@@ -14,6 +14,7 @@ class _LoginMobileScreenState extends State<LoginMobileScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
+  bool _isSubmitting = false;
 
   bool _isRegister = false;
   bool _hidePassword = true;
@@ -43,16 +44,7 @@ class _LoginMobileScreenState extends State<LoginMobileScreen> {
     );
     return;
   }
-
-  // Hiển thị vòng xoay Loading chờ phản hồi từ Firebase
-  showDialog(
-    context: context,
-    barrierDismissible: false,
-    builder: (context) => const Center(
-      child: CircularProgressIndicator(color: Color(0xFF5EEAD4)),
-    ),
-  );
-
+  setState(() => _isSubmitting = true);
   try {
     // Gọi Service đăng ký
     final authService = AuthService();
@@ -60,12 +52,8 @@ class _LoginMobileScreenState extends State<LoginMobileScreen> {
         email: email,
         password: password,
       );
-
     if (mounted) {
-      Navigator.of(context, rootNavigator: true).pop(); 
-    } // Tắt vòng xoay Loading
-
-    if (mounted) {
+        setState(() => _isSubmitting = false);
         showDialog(
           context: context,
           builder: (ctx) => AlertDialog(
@@ -88,8 +76,8 @@ class _LoginMobileScreenState extends State<LoginMobileScreen> {
         );
       }
     } catch (e) {
-      if (mounted) Navigator.of(context, rootNavigator: true).pop();
       if (mounted) {
+        setState(() => _isSubmitting = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(e.toString().replaceAll('Exception: ', ''))),
         );
@@ -106,46 +94,28 @@ class _LoginMobileScreenState extends State<LoginMobileScreen> {
       );
       return;
     }
-    // Hiển thị vòng xoay Loading chờ phản hồi từ Firebase
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(
-        child: CircularProgressIndicator(color: Color(0xFF5EEAD4)),
-      ),
-    );
+    setState(() => _isSubmitting = true);
     try {
-      // Gọi Service đăng nhập đã viết trong auth_logic.dart
-      final authService = AuthService();
-      final userCred = await authService.signInWithEmail(
-        email: email,
-        password: password,
-      );
-
-      if (mounted) {
-        Navigator.of(context, rootNavigator: true).pop(); // Tắt vòng xoay Loading
-      }
-
-      if (userCred != null && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Chào mừng cư dân quay trở lại!')),
-        );
-        widget.onAuthenticated(); // Đăng nhập thành công, kích hoạt bay vào game
-      }
+    final authService = AuthService();
+    await authService.signInWithEmail(
+      email: email,
+      password: password,
+    );
     } catch (e) {
-      if (mounted) Navigator.of(context, rootNavigator: true).pop();
-      if (mounted) {
-        final errorMsg = e.toString().replaceAll('Exception: ', '');
-        if (errorMsg == 'EMAIL_NOT_VERIFIED') {
-          _showEmailNotVerifiedDialog(email, password);
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(errorMsg)),
-          );
-        }
+    if (mounted) {
+      setState(() => _isSubmitting = false); // Tắt loading nếu có lỗi
+      final errorMsg = e.toString().replaceAll('Exception: ', '');
+      if (errorMsg == 'EMAIL_NOT_VERIFIED') {
+        _showEmailNotVerifiedDialog(email, password);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(errorMsg)),
+        );
       }
     }
   }
+}
+
 
   void _showEmailNotVerifiedDialog(String email, String password) {
     showDialog(
@@ -299,6 +269,7 @@ class _LoginMobileScreenState extends State<LoginMobileScreen> {
                         _AuthPanel(
                         isRegister: _isRegister,
                         hidePassword: _hidePassword,
+                        isSubmitting: _isSubmitting,
                         nameController: _emailController,
                         passwordController: _passwordController,
                         confirmPasswordController: _confirmPasswordController,
@@ -324,6 +295,7 @@ class _AuthPanel extends StatelessWidget {
   const _AuthPanel({
     required this.isRegister,
     required this.hidePassword,
+    required this.isSubmitting,
     required this.nameController,
     required this.passwordController,
     required this.confirmPasswordController,
@@ -335,6 +307,7 @@ class _AuthPanel extends StatelessWidget {
 
   final bool isRegister;
   final bool hidePassword;
+  final bool isSubmitting;
   final TextEditingController nameController;
   final TextEditingController passwordController;
   final TextEditingController confirmPasswordController;
@@ -401,23 +374,39 @@ class _AuthPanel extends StatelessWidget {
           SizedBox(
             width: double.infinity,
             height: 52,
-            child: FilledButton.icon(
-              onPressed: onSubmit,
+            child: FilledButton(
+              onPressed: isSubmitting ? null : onSubmit,
               style: FilledButton.styleFrom(
                 backgroundColor: const Color(0xFF5EEAD4),
                 foregroundColor: const Color(0xFF06211D),
+                disabledBackgroundColor: const Color(0xFF5EEAD4).withValues(alpha: 0.4),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
               ),
-              icon: const Icon(Icons.waves, size: 20),
-              label: Text(
-                isRegister ? 'Tạo nơi ẩn danh' : 'Vào đại dương',
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
+              child: isSubmitting
+                  ? const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                        color: Color(0xFF06211D),
+                      ),
+                    )
+                  : Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.waves, size: 20),
+                        const SizedBox(width: 8),
+                        Text(
+                          isRegister ? 'Tạo nơi ẩn danh' : 'Vào đại dương',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ),
             ),
           ),
           const SizedBox(height: 16),

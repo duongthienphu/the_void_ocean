@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb; 
+import 'package:firebase_auth/firebase_auth.dart';
 
 import 'package:ocean/features/auth/login_mobile.dart';
 import 'package:ocean/features/auth/login_web.dart';
@@ -13,22 +14,37 @@ class AuthWrapper extends StatelessWidget {
       MaterialPageRoute<void>(builder: (_) => const GameWrapper()),
     );
   }
- 
+
   @override
   Widget build(BuildContext context) {
-    final width = MediaQuery.of(context).size.width;
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        // 1. Trong lúc app đang đọc token/phiên từ bộ nhớ máy
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            backgroundColor: Color(0xFF06131A),
+            body: Center(
+              child: CircularProgressIndicator(
+                color: Color(0xFF2DD4BF),
+              ),
+            ),
+          );
+        }
+        final user = snapshot.data;
+        if (user != null) {
+          return const GameWrapper();
+        }
+        final width = MediaQuery.of(context).size.width;
+        if (kIsWeb) {
+          if (width < 1080) {
+            return LoginMobileScreen(onAuthenticated: () {});
+          }
+          return LoginWebScreen(onAuthenticated: () {});
+        }
 
-    // 1. Nếu người dùng TRUY CẬP BẰNG WEB
-    if (kIsWeb) {
-      // Nếu màn hình Web bị co nhỏ lại dưới 1080px, đẩy vào màn hình Web Small (không có đăng ký)
-      if (width < 1080) {
-        return LoginMobileScreen(onAuthenticated: () => _enterOcean(context));
-      }
-      // Nếu màn hình Web to bình thường, hiển thị giao diện Web lớn chuẩn chỉ
-      return LoginWebScreen(onAuthenticated: () => _enterOcean(context));
-    }
-    
-    // 2. Nếu người dùng TRUY CẬP BẰNG APP MOBILE THẬT (Android/iOS)
-    return LoginMobileScreen(onAuthenticated: () => _enterOcean(context));
+        return LoginMobileScreen(onAuthenticated: () {});
+      },
+    );
   }
 }
