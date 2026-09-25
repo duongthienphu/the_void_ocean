@@ -33,9 +33,19 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
   // Quản lý Tab hiện tại trên Mobile (0: Home/Vớt, 1: Gieo, 2: User)
   int _currentTab = 0;
 
-  // Trạng thái UI giả lập cho luồng Vớt tâm sự
+  // Trạng thái UI cho luồng Vớt tâm sự
   OceanSecret? _currentFishedSecret;
-  int _fishedCountToday = 0;
+  int get _fishedCountToday {
+    if (_currentUser == null) return 0;
+    final lastDate = _currentUser!.lastFishedDate.toDate();
+    final now = DateTime.now();
+    final bool isSameDay = lastDate.year == now.year &&
+        lastDate.month == now.month &&
+        lastDate.day == now.day;
+
+    // Nếu khác ngày hôm nay -> Tự động tính là 0 lượt
+    return isSameDay ? _currentUser!.dailyFishedCount : 0;
+  }
   final int _maxFishPerDay = 15;
 
   SecretKind _draftKind = SecretKind.text;
@@ -328,7 +338,17 @@ final ValueNotifier<int> _cooldownNotifier = ValueNotifier<int>(0);
   // Logic UI xử lý vớt ngẫu nhiên 1 tâm sự (Tối đa 15 lần/ngày)
   Future<void> _fishRandomSecret() async {
     await _globalAudioManager.disposePlayer();
-    const String currentUserId = "XzFsCj4B9Jb1RLm3httqCUjG7CE3";
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Vui lòng đăng nhập để vớt tâm sự.')),
+      );
+      return;
+    }
+
+    await _globalAudioManager.disposePlayer();
+    final String currentUserId = user.uid;
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -359,8 +379,6 @@ final ValueNotifier<int> _cooldownNotifier = ValueNotifier<int>(0);
         // Vớt thành công -> Cập nhật Object vào UI để widget _SecretBottleCard tự động vẽ
         setState(() {
           _currentFishedSecret = fishedSecret;
-          // Đồng bộ tạm số lượt hiển thị nhanh trên thanh TopBar
-          _fishedCountToday++; 
         });
       }
     } catch (e) {
@@ -402,6 +420,7 @@ final ValueNotifier<int> _cooldownNotifier = ValueNotifier<int>(0);
                     index: _currentTab,
                     children: [
                       _OceanHomeTab(
+                        currentUser: _currentUser,
                         fishedCountToday: _fishedCountToday,
                         maxFishPerDay: _maxFishPerDay,
                         currentFishedSecret: _currentFishedSecret,
@@ -479,6 +498,7 @@ class _OceanHomeTab extends StatelessWidget {
   final AudioSecretManager audioManager;
   final VoidCallback onFish;
   final VoidCallback onToggleHeart;
+  final AppUser? currentUser;
 
   const _OceanHomeTab({
     required this.fishedCountToday,
@@ -488,6 +508,7 @@ class _OceanHomeTab extends StatelessWidget {
     required this.audioManager,
     required this.onFish,
     required this.onToggleHeart,
+    required this.currentUser
   });
 
   @override
