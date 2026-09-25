@@ -778,7 +778,7 @@ class _OceanUserTab extends StatelessWidget {
               try {
                 await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
                 if (context.mounted) {
-                  showOceanSnackBar(context, 'Nhân viên cá đã gửi thư đặt lại mật khẩu tới $email');
+                  showOceanSnackBar(context, 'Đã gửi thư đặt lại mật khẩu tới $email');
                 }
               } catch (e) {
                 if (context.mounted) {
@@ -1027,7 +1027,7 @@ class _OceanUserTab extends StatelessWidget {
     final int postsCount = currentUser?.postsCount ?? 0;
     final double maxBytes = (currentUser?.maxStorageBytes ?? 20971520).toDouble();
     final double availableBytes = (currentUser?.availableStorageBytes ?? 20971520).toDouble();
-    final double usedB = ((maxBytes - availableBytes)).clamp(0.0, maxBytes / 1024);
+    final double usedKB = ((maxBytes - availableBytes) / 1024).clamp(0.0, maxBytes / 1024);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -1093,7 +1093,7 @@ class _OceanUserTab extends StatelessWidget {
                     children: [
                       _buildMiniStat('Tâm sự đã gieo', '$postsCount bài', const Color(0xFF5EEAD4)),
                       Container(width: 1, height: 26, color: Colors.white12),
-                      _buildMiniStat('Dung lượng dùng', '${usedB.toStringAsFixed(1)} B', const Color(0xFFFFA79A)),
+                      _buildMiniStat('Dung lượng dùng', '${usedKB.toStringAsFixed(1)} KB', const Color(0xFFFFA79A)),
                     ],
                   ),
                 ),
@@ -1284,6 +1284,7 @@ class _MobileTopBar extends StatelessWidget {
 
 class _MobileComposer extends StatelessWidget {
   const _MobileComposer({
+    super.key,
     required this.draftKind,
     required this.textController,
     required this.recordingSeconds,
@@ -1335,14 +1336,8 @@ class _MobileComposer extends StatelessWidget {
               _DraftKindButton(
                 label: 'Audio',
                 icon: Icons.mic_none,
-                selected: false,
-                isDisabled: true,
-                onTap: () {
-                  showOceanSnackBar(
-                    context,
-                    'Tính năng gieo tâm sự bằng giọng nói đang được hoàn thiện.',
-                  );
-                },
+                selected: draftKind == SecretKind.audio,
+                onTap: () => onKindChanged(SecretKind.audio),
               ),
             ],
           ),
@@ -1455,14 +1450,12 @@ class _DraftKindButton extends StatelessWidget {
     required this.icon,
     required this.selected,
     required this.onTap,
-    this.isDisabled = false,
   });
 
   final String label;
   final IconData icon;
   final bool selected;
   final VoidCallback onTap;
-  final bool isDisabled;
 
   @override
   Widget build(BuildContext context) {

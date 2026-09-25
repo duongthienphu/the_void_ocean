@@ -8,12 +8,6 @@ import 'package:ocean/features/gameplay/game_wrapper.dart';
  
 class AuthWrapper extends StatelessWidget {
   const AuthWrapper({super.key});
- 
-  void _enterOcean(BuildContext context) {
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute<void>(builder: (_) => const GameWrapper()),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {

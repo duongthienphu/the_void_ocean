@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:ocean/core/auth_logic.dart';
+import 'package:ocean/core/ocean_snackbar.dart';
 
 class LoginMobileScreen extends StatefulWidget {
   const LoginMobileScreen({required this.onAuthenticated, super.key});
@@ -32,18 +33,14 @@ class _LoginMobileScreenState extends State<LoginMobileScreen> {
   final confirmPassword = _confirmPasswordController.text.trim();
   
   if (email.isEmpty || password.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Vui lòng điền email và mật khẩu.')),
-    );
-    return;
-  }
+      showOceanSnackBar(context, 'Vui lòng điền email và mật khẩu.', isError: true);
+      return;
+    }
 
   if (password != confirmPassword) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Mật khẩu nhập lại không khớp.')),
-    );
-    return;
-  }
+      showOceanSnackBar(context, 'Mật khẩu nhập lại không khớp.', isError: true);
+      return;
+    }
   setState(() => _isSubmitting = true);
   try {
     // Gọi Service đăng ký
@@ -60,7 +57,7 @@ class _LoginMobileScreenState extends State<LoginMobileScreen> {
             backgroundColor: const Color(0xFF071820),
             title: const Text('Xác thực tài khoản', style: TextStyle(color: Color(0xFF5EEAD4))),
             content: Text(
-              'Đã gửi liên kết xác thực đến $email.\nVui lòng mở Gmail (kiểm tra cả hòm thư Spam) và nhấn vào liên kết trước khi đăng nhập.',
+              'Nhân viên cá đã gửi liên kết xác thực đến $email.\nVui lòng mở Gmail (kiểm tra cả hòm thư Spam) và nhấn vào liên kết trước khi đăng nhập.',
               style: const TextStyle(color: Colors.white70),
             ),
             actions: [
@@ -78,8 +75,10 @@ class _LoginMobileScreenState extends State<LoginMobileScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => _isSubmitting = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.toString().replaceAll('Exception: ', ''))),
+        showOceanSnackBar(
+          context,
+          e.toString().replaceAll('Exception: ', ''),
+          isError: true,
         );
       }
     }
@@ -89,9 +88,7 @@ class _LoginMobileScreenState extends State<LoginMobileScreen> {
     final password = _passwordController.text.trim();
 
     if (email.isEmpty || password.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Vui lòng điền email và mật khẩu.')),
-      );
+      showOceanSnackBar(context, 'Vui lòng điền email và mật khẩu.', isError: true);
       return;
     }
     setState(() => _isSubmitting = true);
@@ -101,20 +98,18 @@ class _LoginMobileScreenState extends State<LoginMobileScreen> {
       email: email,
       password: password,
     );
-    } catch (e) {
-    if (mounted) {
-      setState(() => _isSubmitting = false); // Tắt loading nếu có lỗi
-      final errorMsg = e.toString().replaceAll('Exception: ', '');
-      if (errorMsg == 'EMAIL_NOT_VERIFIED') {
-        _showEmailNotVerifiedDialog(email, password);
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(errorMsg)),
-        );
+   } catch (e) {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+        final errorMsg = e.toString().replaceAll('Exception: ', '');
+        if (errorMsg == 'EMAIL_NOT_VERIFIED') {
+          _showEmailNotVerifiedDialog(email, password);
+        } else {
+          showOceanSnackBar(context, errorMsg, isError: true);
+        }
       }
     }
   }
-}
 
 
   void _showEmailNotVerifiedDialog(String email, String password) {
@@ -124,7 +119,7 @@ class _LoginMobileScreenState extends State<LoginMobileScreen> {
         backgroundColor: const Color(0xFF071820),
         title: const Text('Chưa xác thực Email', style: TextStyle(color: Color(0xFFFFA79A))),
         content: const Text(
-          'Tài khoản này chưa kích hoạt link trong hộp thư Gmail. Bạn có muốn gửi lại email xác thực không?',
+          'Tài khoản này chưa kích hoạt link trong hộp thư Gmail. Bạn có muốn nhân viên cá gửi lại email xác thực không?',
           style: TextStyle(color: Colors.white70),
         ),
         actions: [
@@ -138,15 +133,11 @@ class _LoginMobileScreenState extends State<LoginMobileScreen> {
               try {
                 await AuthService().resendVerificationEmail(email: email, password: password);
                 if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Đã gửi lại link xác thực! Vui lòng kiểm tra hộp thư.')),
-                  );
+                  showOceanSnackBar(context, 'Nhân viên cá đã gửi lại link xác thực! Vui lòng kiểm tra hộp thư.');
                 }
               } catch (err) {
                 if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text(err.toString())),
-                  );
+                  showOceanSnackBar(context, err.toString().replaceAll('Exception: ', ''), isError: true);
                 }
               }
             },
@@ -197,15 +188,11 @@ class _LoginMobileScreenState extends State<LoginMobileScreen> {
               try {
                 await AuthService().sendPasswordResetEmail(email: targetEmail);
                 if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Đã gửi thư đặt lại mật khẩu tới $targetEmail')),
-                  );
+                  showOceanSnackBar(context, 'Nhân viên cá đã gửi thư đặt lại mật khẩu tới $targetEmail');
                 }
               } catch (err) {
                 if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text(err.toString().replaceAll('Exception: ', ''))),
-                  );
+                  showOceanSnackBar(context, err.toString().replaceAll('Exception: ', ''), isError: true);
                 }
               }
             },
