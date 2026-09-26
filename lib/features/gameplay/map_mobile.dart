@@ -47,7 +47,7 @@ class _OceanMobileScreenState extends State<OceanMobileScreen>
     // Nếu khác ngày hôm nay -> Tự động tính là 0 lượt
     return isSameDay ? _currentUser!.dailyFishedCount : 0;
   }
-  final int _maxFishPerDay = 15;
+  final int _maxFishPerDay = 30;
 
   SecretKind _draftKind = SecretKind.text;
   Timer? _recordingTimer;
@@ -1252,7 +1252,7 @@ class _MobileTopBar extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Đại dương ẩn danh',
+                  'Đại dương',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
@@ -1262,7 +1262,7 @@ class _MobileTopBar extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  'Text, audio và những trái tim im lặng',
+                  'và những chú cá con',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -1638,18 +1638,21 @@ class _SecretBottleCard extends StatelessWidget {
             const SizedBox(height: 12),
             Row(
               children: [
-                Expanded(
-                  child: Text(
-                    secret.drift,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.48),
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
+                if (secret.senderUid != FirebaseAuth.instance.currentUser?.uid)
+                  Expanded(
+                    child: Text(
+                      secret.drift,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.48),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                  ),
-                ),
+                  )
+                else
+                  const Spacer(),
                 _ReplyLetterButton(
                   secret: secret,
                   onTap: () {
@@ -1657,12 +1660,49 @@ class _SecretBottleCard extends StatelessWidget {
                     if (secret.senderUid == currentUid) {
                       showDialog(
                         context: context,
-                        builder: (_) => _OwnerRepliesDialog(replies: secret.replies),
+                        builder: (_) => _OwnerRepliesDialog(
+                          secret: secret,
+                          onRepliesUpdated: () {
+                            if (context.mounted) {
+                              (context as Element).markNeedsBuild();
+                            }
+                          },
+                        ),
                       );
                       return;
                     }
+
                     if (secret.hasReplied) {
-                      showOceanSnackBar(context, 'Bạn đã gửi một mẩu giấy vào chai này rồi.');
+                      final myReply = secret.replies.cast<Map<String, dynamic>?>().firstWhere(
+                        (r) => r?['senderUid'] == currentUid,
+                        orElse: () => null,
+                      );
+                      final String existingText = (myReply?['text'] as String?) ?? '';
+
+                      showDialog(
+                        context: context,
+                        builder: (_) => _ComfortLetterDialog(
+                          secretId: secret.id,
+                          initialText: existingText,
+                          onReplied: () {
+                            if (myReply != null) {
+                              // Cập nhật lại trong mảng local
+                              myReply['text'] = existingText;
+                            }
+                            if (context.mounted) {
+                              (context as Element).markNeedsBuild();
+                            }
+                          },
+                          onDeleted: () {
+                            secret.repliesCount = math.max(0, secret.repliesCount - 1);
+                            secret.hasReplied = false;
+                            secret.replies.removeWhere((r) => r is Map && r['senderUid'] == currentUid);
+                            if (context.mounted) {
+                              (context as Element).markNeedsBuild();
+                            }
+                          },
+                        ),
+                      );
                       return;
                     }
 
@@ -1690,6 +1730,10 @@ class _SecretBottleCard extends StatelessWidget {
                 ),
                 const SizedBox(width: 8),
                 _HeartButton(secret: secret, onTap: onHeart),
+                if (secret.senderUid == FirebaseAuth.instance.currentUser?.uid) ...[
+                  const SizedBox(width: 8),
+                  _DeletePostButton(secret: secret),
+                ],
               ],
             ),
           ],
@@ -1965,21 +2009,35 @@ class _ReplyLetterButton extends StatelessWidget {
 
 class _ComfortLetterDialog extends StatefulWidget {
   const _ComfortLetterDialog({
+    super.key,
     required this.secretId,
+    this.initialText,
     required this.onReplied,
+    this.onDeleted,
   });
 
   final String secretId;
+  final String? initialText;
   final VoidCallback onReplied;
+  final VoidCallback? onDeleted;
 
   @override
   State<_ComfortLetterDialog> createState() => _ComfortLetterDialogState();
 }
 
 class _ComfortLetterDialogState extends State<_ComfortLetterDialog> {
-  final _replyController = TextEditingController();
+  late final TextEditingController _replyController;
   final CloudSecretService _cloudSecretService = CloudSecretService();
   bool _isSubmitting = false;
+  bool _isDeleting = false;
+
+  bool get _isEditing => widget.initialText != null;
+
+  @override
+  void initState() {
+    super.initState();
+    _replyController = TextEditingController(text: widget.initialText ?? '');
+  }
 
   @override
   void dispose() {
@@ -1991,6 +2049,11 @@ class _ComfortLetterDialogState extends State<_ComfortLetterDialog> {
     final text = _replyController.text.trim();
     if (text.isEmpty) return;
 
+    if (_isEditing && text == widget.initialText?.trim()) {
+      Navigator.of(context).pop();
+      return;
+    }
+
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
       showOceanSnackBar(context, 'Vui lòng đăng nhập lại.', isError: true);
@@ -2000,19 +2063,19 @@ class _ComfortLetterDialogState extends State<_ComfortLetterDialog> {
     setState(() => _isSubmitting = true);
 
     try {
+      // 1. Kiểm duyệt AI với mode 'reply'
       final HttpsCallable callable = FirebaseFunctions.instanceFor(region: 'asia-southeast1')
           .httpsCallable('moderateContent');
 
       final result = await callable.call({
         'text': text,
-        'mode': 'reply', // Kích hoạt replySystemInstruction ở backend
+        'mode': 'reply',
       });
 
       final bool isValid = result.data['isValid'] == true;
       final String category = result.data['category'] ?? 'none';
       final String reason = result.data['reason'] ?? '';
 
-      // 2. NẾU VI PHẠM: TẮT LOADING VÀ HIỂN THỊ MODERATION DIALOG
       if (!isValid) {
         if (mounted) {
           setState(() => _isSubmitting = false);
@@ -2022,19 +2085,30 @@ class _ComfortLetterDialogState extends State<_ComfortLetterDialog> {
             reason: reason,
           );
         }
-        return; // Dừng lại, không gửi lên Firestore
+        return;
       }
-      
-      await _cloudSecretService.sendComfortReply(
-        secretId: widget.secretId,
-        senderUid: user.uid,
-        text: text,
-      );
+
+      if (_isEditing) {
+        await _cloudSecretService.updateComfortReplyAsSender(
+          secretId: widget.secretId,
+          senderUid: user.uid,
+          newText: text,
+        );
+      } else {
+        await _cloudSecretService.sendComfortReply(
+          secretId: widget.secretId,
+          senderUid: user.uid,
+          text: text,
+        );
+      }
 
       if (mounted) {
         Navigator.of(context).pop();
         widget.onReplied();
-        showOceanSnackBar(context, 'Mẩu giấy đã được xếp và gửi vào chai!');
+        showOceanSnackBar(
+          context,
+          _isEditing ? 'Đã cập nhật mẩu giấy an ủi!' : 'Mẩu giấy đã được xếp và gửi vào chai!',
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -2048,21 +2122,104 @@ class _ComfortLetterDialogState extends State<_ComfortLetterDialog> {
     }
   }
 
+  void _confirmDeleteReply() {
+    showDialog(
+      context: context,
+      builder: (confirmCtx) => AlertDialog(
+        backgroundColor: const Color(0xFF071820),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+          side: const BorderSide(color: Color(0xFFEF4444), width: 0.8),
+        ),
+        title: const Text(
+          'Rút lại mẩu giấy?',
+          style: TextStyle(
+            color: Color(0xFFEF4444),
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: const Text(
+          'Mẩu giấy này sẽ được lấy ra khỏi chai để nhường chỗ trống cho người khác.',
+          style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(confirmCtx).pop(),
+            child: const Text('Giữ lại', style: TextStyle(color: Colors.white38)),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.of(confirmCtx).pop();
+              _handleDelete();
+            },
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFEF4444),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Rút lại', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _handleDelete() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    setState(() => _isDeleting = true);
+
+    try {
+      await _cloudSecretService.removeReplyAsSender(
+        secretId: widget.secretId,
+        senderUid: user.uid,
+      );
+
+      if (mounted) {
+        Navigator.of(context).pop();
+        widget.onDeleted?.call();
+        showOceanSnackBar(context, 'Đã rút lại mẩu giấy an ủi.');
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isDeleting = false);
+        showOceanSnackBar(
+          context,
+          e.toString().replaceAll('Exception: ', ''),
+          isError: true,
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final bool isBusy = _isSubmitting || _isDeleting;
+
     return AlertDialog(
       backgroundColor: const Color(0xFF071820),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: const Color(0xFF5EEAD4).withValues(alpha: 0.2)),
+        side: BorderSide(
+          color: (_isEditing ? const Color(0xFFFFA79A) : const Color(0xFF5EEAD4)).withValues(alpha: 0.25),
+        ),
       ),
       title: Row(
-        children: const [
-          Icon(Icons.mail_outline_rounded, color: Color(0xFF5EEAD4), size: 20),
-          SizedBox(width: 8),
+        children: [
+          Icon(
+            _isEditing ? Icons.edit_note_rounded : Icons.mail_outline_rounded,
+            color: _isEditing ? const Color(0xFFFFA79A) : const Color(0xFF5EEAD4),
+            size: 22,
+          ),
+          const SizedBox(width: 8),
           Text(
-            'Gửi mẩu giấy an ủi',
-            style: TextStyle(color: Color(0xFF5EEAD4), fontSize: 16, fontWeight: FontWeight.bold),
+            _isEditing ? 'Sửa mẩu giấy an ủi' : 'Gửi mẩu giấy an ủi',
+            style: TextStyle(
+              color: _isEditing ? const Color(0xFFFFA79A) : const Color(0xFF5EEAD4),
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+            ),
           ),
         ],
       ),
@@ -2070,16 +2227,18 @@ class _ComfortLetterDialogState extends State<_ComfortLetterDialog> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Gấp một lời nhắn nhỏ (tối đa 60 ký tự) gửi vào chai thư của người lạ:',
-            style: TextStyle(color: Colors.white70, fontSize: 12.5, height: 1.4),
+          Text(
+            _isEditing
+                ? 'Bạn có thể chỉnh sửa lại lời nhắn (tối đa 60 ký tự) hoặc rút lại mẩu giấy:'
+                : 'Gấp một lời nhắn nhỏ (tối đa 60 ký tự) gửi vào chai thư của người lạ:',
+            style: const TextStyle(color: Colors.white70, fontSize: 12.5, height: 1.4),
           ),
           const SizedBox(height: 14),
           TextField(
             controller: _replyController,
             maxLength: 60,
             autofocus: true,
-            enabled: !_isSubmitting,
+            enabled: !isBusy,
             style: const TextStyle(color: Colors.white, fontSize: 13),
             decoration: const InputDecoration(
               hintText: 'Nhập lời an ủi ấm áp...',
@@ -2090,12 +2249,18 @@ class _ComfortLetterDialogState extends State<_ComfortLetterDialog> {
         ],
       ),
       actions: [
+        if (_isEditing)
+          TextButton.icon(
+            onPressed: isBusy ? null : _confirmDeleteReply,
+            icon: const Icon(Icons.delete_outline_rounded, size: 16, color: Color(0xFFEF4444)),
+            label: const Text('Rút lại', style: TextStyle(color: Color(0xFFEF4444))),
+          ),
         TextButton(
-          onPressed: _isSubmitting ? null : () => Navigator.of(context).pop(),
-          child: const Text('Thả trôi đi', style: TextStyle(color: Colors.white38)),
+          onPressed: isBusy ? null : () => Navigator.of(context).pop(),
+          child: const Text('Đóng', style: TextStyle(color: Colors.white38)),
         ),
         FilledButton(
-          onPressed: _isSubmitting ? null : _handleSend,
+          onPressed: isBusy ? null : _handleSend,
           style: FilledButton.styleFrom(
             backgroundColor: const Color(0xFF5EEAD4),
             foregroundColor: const Color(0xFF06211D),
@@ -2106,7 +2271,7 @@ class _ComfortLetterDialogState extends State<_ComfortLetterDialog> {
                   height: 16,
                   child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF06211D)),
                 )
-              : const Text('Gửi gắm', style: TextStyle(fontWeight: FontWeight.bold)),
+              : Text(_isEditing ? 'Lưu lại' : 'Gửi gắm', style: const TextStyle(fontWeight: FontWeight.bold)),
         ),
       ],
     );
@@ -2250,12 +2415,105 @@ class _Bubble {
   final double opacity;
 }
 
-class _OwnerRepliesDialog extends StatelessWidget {
-  const _OwnerRepliesDialog({required this.replies});
-  final List<dynamic> replies;
+class _OwnerRepliesDialog extends StatefulWidget {
+  const _OwnerRepliesDialog({
+    required this.secret,
+    required this.onRepliesUpdated,
+  });
+
+  final OceanSecret secret;
+  final VoidCallback onRepliesUpdated;
+
+  @override
+  State<_OwnerRepliesDialog> createState() => _OwnerRepliesDialogState();
+}
+
+class _OwnerRepliesDialogState extends State<_OwnerRepliesDialog> {
+  final CloudSecretService _cloudSecretService = CloudSecretService();
+  int? _deletingIndex;
+
+  void _confirmDeleteReply(int index) {
+    showDialog(
+      context: context,
+      builder: (confirmCtx) => AlertDialog(
+        backgroundColor: const Color(0xFF071820),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+          side: const BorderSide(color: Color(0xFFEF4444), width: 0.8),
+        ),
+        title: const Text(
+          'Thả mẩu giấy trôi đi?',
+          style: TextStyle(
+            color: Color(0xFFEF4444),
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: const Text(
+          'Mẩu giấy này sẽ biến mất vĩnh viễn khỏi chiếc chai để nhường chỗ trống cho lời nhắn khác.',
+          style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(confirmCtx).pop(),
+            child: const Text('Giữ lại', style: TextStyle(color: Colors.white38)),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.of(confirmCtx).pop();
+              _handleDeleteReply(index);
+            },
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFEF4444),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Thả trôi', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _handleDeleteReply(int index) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null || user.uid != widget.secret.senderUid) return;
+
+    setState(() => _deletingIndex = index);
+
+    try {
+      await _cloudSecretService.removeReplyAsOwner(
+        secretId: widget.secret.id,
+        ownerUid: user.uid,
+        replyIndex: index,
+      );
+
+      if (mounted) {
+        setState(() {
+          final updated = List<dynamic>.from(widget.secret.replies);
+          updated.removeAt(index);
+          widget.secret.replies = updated;
+          widget.secret.repliesCount = updated.length;
+          _deletingIndex = null;
+        });
+        widget.onRepliesUpdated();
+        showOceanSnackBar(context, 'Đã thả mẩu giấy trôi đi để nhường chỗ trống.');
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _deletingIndex = null);
+        showOceanSnackBar(
+          context,
+          e.toString().replaceAll('Exception: ', ''),
+          isError: true,
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final replies = widget.secret.replies;
+
     return AlertDialog(
       backgroundColor: const Color(0xFF071820),
       shape: RoundedRectangleBorder(
@@ -2263,12 +2521,14 @@ class _OwnerRepliesDialog extends StatelessWidget {
         side: BorderSide(color: const Color(0xFF5EEAD4).withValues(alpha: 0.25)),
       ),
       title: Row(
-        children: const [
-          Icon(Icons.mark_email_read_outlined, color: Color(0xFF5EEAD4), size: 20),
-          SizedBox(width: 8),
-          Text(
-            'Những mẩu giấy ủi an',
-            style: TextStyle(color: Color(0xFF5EEAD4), fontSize: 16, fontWeight: FontWeight.bold),
+        children: [
+          const Icon(Icons.mark_email_read_outlined, color: Color(0xFF5EEAD4), size: 20),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Những mẩu giấy ủi an (${replies.length}/3)',
+              style: const TextStyle(color: Color(0xFF5EEAD4), fontSize: 16, fontWeight: FontWeight.bold),
+            ),
           ),
         ],
       ),
@@ -2276,7 +2536,7 @@ class _OwnerRepliesDialog extends StatelessWidget {
           ? const Padding(
               padding: EdgeInsets.symmetric(vertical: 20),
               child: Text(
-                'Chai tâm sự của bạn vẫn đang lênh đênh trôi dạt, chưa có ai nhét mẩu giấy nào vào cả...',
+                'Chai tâm sự của bạn vẫn đang lênh đênh, chưa có ai nhét mẩu giấy nào vào cả...',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.white54, fontSize: 13, height: 1.4),
               ),
@@ -2290,16 +2550,17 @@ class _OwnerRepliesDialog extends StatelessWidget {
                 itemBuilder: (context, index) {
                   final reply = replies[index];
                   final String text = (reply is Map ? reply['text'] : '') ?? '';
+                  final bool isThisDeleting = _deletingIndex == index;
 
                   return Container(
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                     decoration: BoxDecoration(
                       color: Colors.white.withValues(alpha: 0.05),
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(color: Colors.white10),
                     ),
                     child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         const Text('✉ ', style: TextStyle(fontSize: 12)),
                         Expanded(
@@ -2313,6 +2574,23 @@ class _OwnerRepliesDialog extends StatelessWidget {
                             ),
                           ),
                         ),
+                        const SizedBox(width: 8),
+                        if (isThisDeleting)
+                          const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFFFA79A)),
+                          )
+                        else
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline_rounded, size: 18, color: Color(0xFFFFA79A)),
+                            tooltip: 'Gỡ mẩu giấy này ra khỏi chai',
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                            onPressed: _deletingIndex != null
+                                ? null
+                                : () => _confirmDeleteReply(index),
+                          ),
                       ],
                     ),
                   );
@@ -2326,9 +2604,128 @@ class _OwnerRepliesDialog extends StatelessWidget {
             backgroundColor: const Color(0xFF5EEAD4),
             foregroundColor: const Color(0xFF06211D),
           ),
-          child: const Text('Gấp lại', style: TextStyle(fontWeight: FontWeight.bold)),
+          child: const Text('Đóng lại', style: TextStyle(fontWeight: FontWeight.bold)),
         ),
       ],
+    );
+  }
+}
+class _DeletePostButton extends StatefulWidget {
+  const _DeletePostButton({required this.secret});
+  final OceanSecret secret;
+
+  @override
+  State<_DeletePostButton> createState() => _DeletePostButtonState();
+}
+
+class _DeletePostButtonState extends State<_DeletePostButton> {
+  bool _isDeleting = false;
+
+  void _confirmDeletePost(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (confirmCtx) => AlertDialog(
+        backgroundColor: const Color(0xFF071820),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+          side: const BorderSide(color: Color(0xFFEF4444), width: 0.8),
+        ),
+        title: Row(
+          children: const [
+            Icon(Icons.warning_amber_rounded, color: Color(0xFFEF4444), size: 20),
+            SizedBox(width: 8),
+            Text(
+              'Nhấn chìm tâm sự?',
+              style: TextStyle(
+                color: Color(0xFFEF4444),
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        content: const Text(
+          'Tâm sự này sẽ vĩnh viễn biến mất khỏi đại dương. Dung lượng lưu trữ sẽ được hoàn trả lại cho kho của bạn.',
+          style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(confirmCtx).pop(),
+            child: const Text('Giữ lại', style: TextStyle(color: Colors.white38)),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.of(confirmCtx).pop();
+              _handleDeletePost();
+            },
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFEF4444),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Nhấn chìm', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _handleDeletePost() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null || user.uid != widget.secret.senderUid) return;
+
+    setState(() => _isDeleting = true);
+
+    try {
+      final int bytes = utf8.encode(widget.secret.body).length;
+      await CloudSecretService().deleteSecret(
+        secretId: widget.secret.id,
+        userId: user.uid,
+        sizeInBytes: bytes,
+      );
+
+      if (mounted) {
+        showOceanSnackBar(context, 'Đã nhấn chìm tâm sự xuống đáy biển.');
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isDeleting = false);
+        showOceanSnackBar(
+          context,
+          e.toString().replaceAll('Exception: ', ''),
+          isError: true,
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isDeleting) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 8),
+        child: SizedBox(
+          width: 16,
+          height: 16,
+          child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFFFA79A)),
+        ),
+      );
+    }
+
+    return Material(
+      color: Colors.white.withValues(alpha: 0.06),
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        onTap: () => _confirmDeletePost(context),
+        borderRadius: BorderRadius.circular(8),
+        child: const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: Icon(
+            Icons.delete_outline_rounded,
+            size: 17,
+            color: Color(0xFFFFA79A),
+          ),
+        ),
+      ),
     );
   }
 }

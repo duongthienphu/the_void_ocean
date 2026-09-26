@@ -67,10 +67,11 @@ class OceanSecret {
     this.audioUrl,
     this.isLiked = false,
     this.repliesCount = 0,
-    this.replies = const [],
+    List<dynamic>? replies,
     this.hasReplied = false,
     double? seed,
-  }) : seed = seed ?? math.Random().nextDouble() * 100;
+  }) : replies = List<dynamic>.from(replies ?? []), 
+       seed = seed ?? math.Random().nextDouble() * 100;
 
   final String id;
   final String senderUid;
@@ -84,12 +85,12 @@ class OceanSecret {
   int hearts;
   bool isLiked;
   int repliesCount;
-  final List<dynamic> replies;
+  List<dynamic> replies;
   bool hasReplied;
   factory OceanSecret.fromFirestore(Map<String, dynamic> data, String docId, {String? currentUserId}) {
     final List<dynamic> rawPalette = data['palette'] as List<dynamic>? ?? [0xFF5EEAD4, 0xFFFFA79A];
     final List<dynamic> likedUsers = data['likedUserIds'] as List<dynamic>? ?? [];
-    final List<dynamic> rawReplies = data['replies'] as List<dynamic>? ?? [];
+    final List<dynamic> rawReplies = List<dynamic>.from(data['replies'] as List<dynamic>? ?? []);
     final bool userHasReplied = currentUserId != null &&
         rawReplies.any((item) => item is Map && item['senderUid'] == currentUserId);
 
