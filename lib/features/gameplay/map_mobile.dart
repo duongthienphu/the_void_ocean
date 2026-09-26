@@ -11,6 +11,7 @@ import 'package:ocean/models/app_user.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:ocean/core/moderation_dialog.dart';
 import 'package:ocean/core/ocean_snackbar.dart';
+import 'package:audioplayers/audioplayers.dart';
 
 class OceanMobileScreen extends StatefulWidget {
   const OceanMobileScreen({super.key});
@@ -19,7 +20,8 @@ class OceanMobileScreen extends StatefulWidget {
 }
 
 class _OceanMobileScreenState extends State<OceanMobileScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+      final AudioPlayer _bgmPlayer = AudioPlayer();
 
   AppUser? _currentUser;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _userSubscription;
@@ -64,6 +66,8 @@ final ValueNotifier<int> _cooldownNotifier = ValueNotifier<int>(0);
       duration: const Duration(seconds: 24),
     )..repeat();
 
+    _startBackgroundMusic();
+
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
       _userSubscription = FirebaseFirestore.instance
@@ -80,8 +84,33 @@ final ValueNotifier<int> _cooldownNotifier = ValueNotifier<int>(0);
     }
   }
 
+  Future<void> _startBackgroundMusic() async {
+    try {
+      // 1. Chế độ phát lặp vô tận
+      await _bgmPlayer.setReleaseMode(ReleaseMode.loop);
+      await _bgmPlayer.setVolume(1.0);
+      // 2. Phát từ file asset
+      await _bgmPlayer.play(AssetSource('bgm.mp3'));
+    } catch (e) {
+      debugPrint("Lỗi khởi tạo BGM: $e");
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      _bgmPlayer.pause();
+    } else if (state == AppLifecycleState.resumed) {
+      _bgmPlayer.resume();
+    }
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _bgmPlayer.stop();
+    _bgmPlayer.dispose();
     _userSubscription?.cancel();
     _recordingTimer?.cancel();
     _textController.dispose();
@@ -1212,6 +1241,83 @@ class _OceanUserTab extends StatelessWidget {
 class _MobileTopBar extends StatelessWidget {
   const _MobileTopBar();
 
+  void _showDonateDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF071820),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24), 
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(
+            color: const Color(0xFF5EEAD4).withValues(alpha: 0.3),
+            width: 1,
+          ),
+        ),
+        title: Row(
+          children: const [
+            Icon(Icons.favorite_rounded, color: Color(0xFFFFA79A), size: 20),
+            SizedBox(width: 8),
+            Text(
+              'Gửi một chút ấm áp',
+              style: TextStyle(
+                color: Color(0xFF5EEAD4),
+                fontSize: 16,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: double.maxFinite, 
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Nếu bạn cảm thấy bình yên tại đại dương này, bạn có thể tiếp thêm chút năng lượng để dự án tiếp tục phát triển nhé ☕',
+                style: TextStyle(color: Colors.white70, fontSize: 12.5, height: 1.4),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  color: Colors.white,
+                  padding: const EdgeInsets.all(12),
+                  child: Image.asset(
+                    'assets/qr.jpg',
+                    fit: BoxFit.contain, 
+                    errorBuilder: (context, error, stackTrace) => Container(
+                      height: 200,
+                      color: Colors.white10,
+                      alignment: Alignment.center,
+                      child: const Text(
+                        'Chưa tìm thấy ảnh assets/qr.jpg',
+                        style: TextStyle(color: Colors.white54, fontSize: 12),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF5EEAD4),
+              foregroundColor: const Color(0xFF06211D),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: const Text('Đóng lại', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -1275,7 +1381,48 @@ class _MobileTopBar extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 10),
-          const HologramText('Made by Duong Thien Phu'),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              const HologramText('Made by Duong Thien Phu'),
+              const SizedBox(height: 4),
+              Material(
+                color: const Color(0xFF5EEAD4).withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(6),
+                child: InkWell(
+                  onTap: () => _showDonateDialog(context),
+                  borderRadius: BorderRadius.circular(6),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: const Color(0xFF5EEAD4).withValues(alpha: 0.35),
+                        width: 0.8,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: const [
+                        Icon(Icons.volunteer_activism_outlined, size: 12, color: Color(0xFF5EEAD4)),
+                        SizedBox(width: 4),
+                        Text(
+                          'donate\$',
+                          style: TextStyle(
+                            color: Color(0xFF5EEAD4),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
