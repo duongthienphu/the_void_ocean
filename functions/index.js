@@ -4,7 +4,7 @@ const { GoogleGenAI, Type } = require("@google/genai");
 
 admin.initializeApp();  
 
-const systemInstruction = `
+const postSystemInstruction = `
 Bạn là một người kiểm duyệt nội dung tự động cấp cao của mạng xã hội ẩn danh "The Void Ocean".
 Nhiệm vụ: Kiểm duyệt cực kỳ nghiêm ngặt và khắt khe đối với mọi tâm sự được gửi vào đại dương.
 
@@ -25,6 +25,32 @@ TIÊU CHUẨN HỢP LỆ (Chỉ chấp nhận khi):
 
 NGUYÊN TẮC PHÂN LOẠI:
 - Nếu vi phạm: 'isValid' = false, chọn đúng 1 danh mục phù hợp nhất vào 'category', và giải thích ngắn gọn, xúc tích bằng tiếng Việt trong 'reason'.
+- Nếu hợp lệ: 'isValid' = true, 'category' = 'none', 'reason' = "".
+`;
+
+const replySystemInstruction = `
+Bạn là người kiểm duyệt mẩu giấy an ủi (tối đa 60 ký tự) gửi cho người lạ trong chai thư trên "The Void Ocean".
+Người nhận là người đang trút bầu tâm sự. Bạn phải bảo vệ họ khỏi sự công kích, chế giễu hoặc lừa đảo.
+
+TIÊU CHUẨN VI PHẠM ĐỐI VỚI MẨU GIẤY AN ỦI:
+1. 'thu_ghet_tuc_tiu':
+   - Chế giễu, đổ lỗi nạn nhân (victim-blaming): "yếu đuối thế", "có vậy cũng than", "tại bạn dở đấy", "kêu ca ít thôi".
+   - Mỉa mai ngầm, trù ẻo, chửi bới, dùng từ ngữ tục tĩu, xúc phạm.
+2. 'bao_luc_de_doa':
+   - Khuyên người khác buông xuôi cực đoan, xúi giục tự hại ("đi chết đi", "kết thúc cho xong"), đe dọa.
+3. 'tiet_lo_danh_tinh':
+   - Hỏi han hoặc để lại thông tin cá nhân: số điện thoại, tài khoản mạng xã hội, tên trường/lớp cụ thể nhằm mục đích gạ gẫm làm quen ngoài đời.
+4. 'vo_nghia_spam':
+   - Ký tự bừa bãi, vô nghĩa ("asdfg", "11111", ".....").
+   - Gạ kèo, quảng cáo, cờ bạc, link lừa đảo, spam số.
+5. 'chong_pha_chinh_tri':
+   - Bàn luận chính trị, kích động thù hằn vùng miền.
+
+TIÊU CHUẨN HỢP LỆ (isValid = true):
+- Những lời động viên chân thành, ấm áp, câu chúc ngủ ngon, lời khuyên nhẹ nhàng, sự đồng cảm hoặc đơn giản là câu vỗ về bình dị ("cố lên nhé", "ngày mai trời lại sáng", "bạn đã vất vả rồi").
+
+NGUYÊN TẮC PHÂN LOẠI:
+- Nếu vi phạm: 'isValid' = false, chọn đúng 1 danh mục vi phạm phù hợp nhất vào 'category', và giải thích ngắn gọn trong 'reason'.
 - Nếu hợp lệ: 'isValid' = true, 'category' = 'none', 'reason' = "".
 `;
 
@@ -85,7 +111,7 @@ async function getBestGroqModel(apiKey) {
   }
 }
 
-async function callGroq(apiKey, content) {
+async function callGroq(apiKey, content, activeInstruction) {
   if (!cachedGroqModel) {
     cachedGroqModel = await getBestGroqModel(apiKey);
     console.log(`[GROQ] Đang kích hoạt model: ${cachedGroqModel}`);
@@ -104,7 +130,7 @@ async function callGroq(apiKey, content) {
       messages: [
         { 
           role: "system", 
-          content: `${systemInstruction}\nYou must respond in valid JSON format.` 
+          content: `${activeInstruction}\nYou must respond in valid JSON format.` 
         },
         { 
           role: "user", 
@@ -133,6 +159,8 @@ exports.moderateContent = onCall({
   timeoutSeconds: 120,
 }, async (request) => {
   const content = request.data.text;
+  const mode = request.data.mode || "post";
+  const activeInstruction = mode === "reply" ? replySystemInstruction : postSystemInstruction;
   if (!content || typeof content !== "string") {
     throw new HttpsError("invalid-argument", "Nội dung cần kiểm duyệt không hợp lệ.");
   }
@@ -180,7 +208,7 @@ exports.moderateContent = onCall({
       let executePromise;
 
       if (provider === "groq") {
-        executePromise = callGroq(apiKey, content);
+        executePromise = callGroq(apiKey, content, activeInstruction);
       } else {
         const ai = new GoogleGenAI({ apiKey: apiKey });
         
@@ -192,7 +220,7 @@ exports.moderateContent = onCall({
         model: cachedActiveModel,
         contents: content,
         config: {
-          systemInstruction: systemInstruction,
+          systemInstruction: activeInstruction,
           responseMimeType: "application/json",
           thinkingConfig: {
             thinkingBudget: 0,
@@ -250,7 +278,7 @@ exports.moderateContent = onCall({
       if (timeoutId) clearTimeout(timeoutId);
 
       const errorMessage = error.message || "";
-      const errorCode = error.status || error.code;
+      const errorCodemoderateContent = error.status || error.code;
 
       console.warn(`Key ${doc.id} gặp sự cố:`, errorMessage);
 

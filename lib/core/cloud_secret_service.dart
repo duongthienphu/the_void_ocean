@@ -99,4 +99,47 @@ class CloudSecretService {
           : FieldValue.arrayRemove([userId]),
     });
   }
+  Future<void> sendComfortReply({
+    required String secretId,
+    required String senderUid,
+    required String text,
+  }) async {
+    final docRef = _firestore.collection('secrets').doc(secretId);
+
+    await _firestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(docRef);
+      if (!snapshot.exists) {
+        throw Exception('Chai thư đã trôi dạt mất khỏi vùng biển này.');
+      }
+
+      final data = snapshot.data() ?? {};
+      final List<dynamic> rawReplies = (data['replies'] as List<dynamic>?) ?? [];
+      final int currentCount = (data['repliesCount'] as num?)?.toInt() ?? rawReplies.length;
+
+      // 1. Kiểm tra giới hạn 3 mẩu giấy
+      if (currentCount >= 3) {
+        throw Exception('Chiếc chai này đã đầy ắp 3 mẩu giấy an ủi rồi.');
+      }
+
+      // 2. Kiểm tra xem người này đã từng gửi chưa
+      final bool alreadyReplied = rawReplies.any(
+        (item) => item is Map && item['senderUid'] == senderUid,
+      );
+      if (alreadyReplied) {
+        throw Exception('Bạn đã gửi mẩu giấy an ủi vào chai này rồi.');
+      }
+
+      // 3. Đẩy mẩu giấy mới vào mảng và tăng biến đếm
+      final newReply = {
+        'senderUid': senderUid,
+        'text': text,
+        'createdAt': Timestamp.now(),
+      };
+
+      transaction.update(docRef, {
+        'replies': FieldValue.arrayUnion([newReply]),
+        'repliesCount': FieldValue.increment(1),
+      });
+    });
+  }
 }

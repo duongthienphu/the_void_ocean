@@ -26,7 +26,7 @@ class AuthWrapper extends StatelessWidget {
           );
         }
         final user = snapshot.data;
-        if (user != null) {
+        if (user != null && user.emailVerified) {
           return const GameWrapper();
         }
         final width = MediaQuery.of(context).size.width;
